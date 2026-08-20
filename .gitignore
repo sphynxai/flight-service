@@ -10,3 +10,6 @@ build/
 *~
 .vscode/
 .idea/
+
+# generated at runtime on the deploy host
+deploy/kbmsolvedit/fb_cache.php

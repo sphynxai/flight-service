@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flight Service Briefing — AlbertAI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+    }
+    h1 {
+      color: #1e3c72;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      color: #333;
+      font-weight: 500;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    input, select {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #2a5298;
+      box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+    .geolocation-badge {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .location-icon { color: #2a5298; }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: #2a5298;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 10px;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background: #1e3c72;
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .briefing-area {
+      margin-top: 30px;
+      padding-top: 30px;
+      border-top: 1px solid #eee;
+    }
+    .briefing-text {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 6px;
+      line-height: 1.6;
+      color: #333;
+      font-size: 14px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .section {
+      margin-bottom: 18px;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6b7a90;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .station {
+      background: #f8f9fa;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .station-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .station-id {
+      font-weight: 700;
+      color: #1e3c72;
+      font-size: 15px;
+    }
+    .station-name {
+      font-size: 12px;
+      color: #888;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cat {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .cat-VFR  { background: #2e7d32; }
+    .cat-MVFR { background: #1565c0; }
+    .cat-IFR  { background: #c62828; }
+    .cat-LIFR { background: #6a1b9a; }
+    .cat-NA   { background: #9e9e9e; }
+    .wx-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px 14px;
+      margin-bottom: 10px;
+    }
+    .wx-item { font-size: 13px; }
+    .wx-label {
+      display: block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #8a93a0;
+    }
+    .wx-value { color: #222; font-weight: 500; }
+    .raw {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      color: #55606e;
+      background: #eef1f4;
+      padding: 8px 10px;
+      border-radius: 4px;
+      word-break: break-word;
+      line-height: 1.5;
+    }
+    .notam-item {
+      font-size: 13px;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border-left: 3px solid #b0bac6;
+      border-radius: 0 4px 4px 0;
+      margin-bottom: 6px;
+    }
+    .notam-airport { font-weight: 600; color: #1e3c72; }
+    .badge-mock {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      background: #fff3cd;
+      color: #8a6100;
+      border: 1px solid #ffe08a;
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+    .advisory {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #5a6472;
+      background: #fbfcfd;
+      border: 1px solid #e4e9ef;
+      border-radius: 6px;
+      padding: 12px 14px;
+    }
+    .advisory strong { color: #1e3c72; }
+    .toggle-raw {
+      background: none;
+      border: none;
+      color: #2a5298;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+      width: auto;
+      margin: 0 0 10px 0;
+    }
+    .toggle-raw:hover { background: none; text-decoration: underline; }
+    .status {
+      font-size: 12px;
+      color: #666;
+      margin-top: 12px;
+      text-align: center;
+    }
+    .loading {
+      display: inline-block;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .error { color: #d32f2f; }
+    .success { color: #388e3c; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✈️ Flight Service Briefing</h1>
+    <p class="subtitle">Weather, NOTAMs & SUA briefing via AlbertAI</p>
+
+    <form id="briefingForm">
+      <div class="form-group">
+        <label for="departure">Departure Airport (ICAO)</label>
+        <input type="text" id="departure" name="departure" placeholder="KJFK" value="KJFK" required>
+      </div>
+
+      <div class="form-group">
+        <label for="arrival">Arrival Airport (ICAO)</label>
+        <input type="text" id="arrival" name="arrival" placeholder="KLAX" value="KLAX" required>
+      </div>
+
+      <div class="two-col">
+        <div class="form-group">
+          <label for="altitude">Cruising Altitude (feet)</label>
+          <input type="text" id="altitude" name="altitude" placeholder="8000" value="8000">
+        </div>
+        <div class="form-group">
+          <label for="aircraft">Aircraft Type (optional)</label>
+          <input type="text" id="aircraft" name="aircraft" placeholder="C172">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Your Location</label>
+        <div class="geolocation-badge">
+          <span class="location-icon">📍</span>
+          <span id="locationStatus">Detecting...</span>
+        </div>
+        <input type="hidden" id="latitude" name="latitude">
+        <input type="hidden" id="longitude" name="longitude">
+      </div>
+
+      <button type="submit">Get Briefing</button>
+      <div class="status" id="status"></div>
+    </form>
+
+    <div class="briefing-area" id="briefingArea" style="display: none;">
+      <h3 style="color:#1e3c72; margin-bottom:18px;">Your Briefing</h3>
+      <div id="briefingRender"></div>
+      <button type="button" class="toggle-raw" id="toggleRaw">Show full briefing text ▾</button>
+      <div class="briefing-text" id="briefingText" style="display:none;"></div>
+      <div style="margin-top: 16px; text-align: center;">
+        <button type="button" id="speakButton" style="background: #ff6b35;">🔊 Read Aloud</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Geolocation setup
+    function detectLocation() {
+      const statusEl = document.getElementById('locationStatus');
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
+            document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
+            statusEl.textContent = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+          },
+          (err) => {
+            statusEl.textContent = 'Geolocation denied (manual entry ok)';
+            console.warn('Geolocation denied:', err);
+          }
+        );
+      } else {
+        statusEl.textContent = 'Browser does not support geolocation';
+      }
+    }
+
+    // Request briefing
+    document.getElementById('briefingForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const departure = document.getElementById('departure').value.toUpperCase();
+      const arrival = document.getElementById('arrival').value.toUpperCase();
+      const altitude = document.getElementById('altitude').value;
+      const aircraft = document.getElementById('aircraft').value.toUpperCase();
+      const latitude = parseFloat(document.getElementById('latitude').value);
+      const longitude = parseFloat(document.getElementById('longitude').value);
+
+      const statusEl = document.getElementById('status');
+      statusEl.innerHTML = '<span class="loading">⏳</span> Fetching briefing...';
+
+      try {
+        const response = await fetch('api.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ departure, arrival, altitude, aircraft, latitude, longitude })
+        });
+
+        if (!response.ok) throw new Error('Request failed');
+        const data = await response.json();
+
+        // Display briefing
+        document.getElementById('briefingText').textContent = data.briefing;
+        renderBriefing(data);
+        document.getElementById('briefingArea').style.display = 'block';
+        statusEl.innerHTML = '<span class="success">✓ Briefing ready</span>';
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">✗ ${err.message}</span>`;
+      }
+    });
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    function wxItem(label, value) {
+      if (value == null || value === '') return '';
+      return `<div class="wx-item"><span class="wx-label">${esc(label)}</span>` +
+             `<span class="wx-value">${esc(value)}</span></div>`;
+    }
+
+    // Renders only fields NOAA decoded server-side — no METAR parsing here.
+    function stationCard(label, icao, m) {
+      if (!m) {
+        return `<div class="station"><div class="station-head">` +
+               `<span class="station-id">${esc(icao)}</span>` +
+               `<span class="cat cat-NA">NO DATA</span></div>` +
+               `<div class="wx-value" style="font-size:13px;color:#888;">` +
+               `${esc(label)} weather unavailable</div></div>`;
+      }
+
+      let wind = '—';
+      if (m.wdir === 0 && m.wspd === 0) wind = 'Calm';
+      else if (m.wspd != null) {
+        wind = `${m.wdir === 'VRB' ? 'VRB' : m.wdir + '°'} at ${m.wspd}kt` +
+               (m.wgst ? ` G${m.wgst}` : '');
+      }
+
+      const ceil = (m.clouds || []).find(c => c.cover === 'BKN' || c.cover === 'OVC');
+      const cat = m.fltCat || 'NA';
+
+      return `<div class="station">
+        <div class="station-head">
+          <span class="station-id">${esc(icao)}</span>
+          <span class="cat cat-${esc(cat)}">${esc(cat)}</span>
+          <span class="station-name">${esc(m.station || '')}</span>
+        </div>
+        <div class="wx-grid">
+          ${wxItem('Wind', wind)}
+          ${wxItem('Visibility', m.visib != null ? m.visib + ' SM' : null)}
+          ${wxItem('Ceiling', ceil ? `${ceil.cover} ${ceil.base.toLocaleString()} ft` : 'None reported')}
+          ${wxItem('Present wx', m.wxString)}
+          ${wxItem('Temp / Dew', m.temp != null ? `${Math.round(m.temp)}°C / ${Math.round(m.dewp)}°C` : null)}
+          ${wxItem('Altimeter', m.altim != null ? (m.altim / 33.8639).toFixed(2) + ' inHg' : null)}
+        </div>
+        <div class="raw">${esc(m.raw)}</div>
+      </div>`;
+    }
+
+    function windCard(label, w) {
+      if (!w || !w.available) {
+        return `<div class="notam-item"><span class="notam-airport">${esc(w?.airport || label)}</span>` +
+               ` — winds aloft unavailable <span style="color:#8a93a0;">` +
+               `(${esc(w?.reason || 'no data')})</span></div>`;
+      }
+      const wind = w.lightVariable ? 'Light &amp; variable' : `${esc(w.dir)}° at ${esc(w.speed)} kt`;
+      // Must be visible when the forecast level differs from the filed altitude.
+      const levelText = w.requestedAltitude && w.requestedAltitude !== w.level
+        ? `${w.level.toLocaleString()} ft — nearest to filed ${w.requestedAltitude.toLocaleString()} ft`
+        : `${w.level.toLocaleString()} ft`;
+      return `<div class="station">
+        <div class="station-head">
+          <span class="station-id">${esc(w.airport)}</span>
+          <span class="cat" style="background:#37474f;">FL${String(w.level / 100).padStart(3, '0')}</span>
+          <span class="station-name">FB station ${esc(w.station)}${w.substituted ? ' — nearest available' : ''}</span>
+        </div>
+        <div class="wx-grid">
+          ${wxItem('Wind', w.lightVariable ? 'Light & variable' : `${w.dir}° at ${w.speed} kt`)}
+          ${wxItem('Temp', w.temp != null ? `${w.temp}°C` : null)}
+          ${wxItem('Level', levelText)}
+        </div>
+        <div class="raw">${esc(w.raw)}${w.validity ? ' · ' + esc(w.validity) : ''}</div>
+      </div>`;
+    }
+
+    function renderBriefing(data) {
+      const w = data.weather || {};
+      const winds = data.winds || {};
+      const notams = data.notams || [];
+      const sua = data.sua || {};
+      const cats = [w.departure?.metar?.fltCat, w.arrival?.metar?.fltCat].filter(Boolean);
+
+      const notamsMock = notams.some(n => n.source === 'placeholder');
+      const notamHtml = notams.length
+        ? notams.map(n => `<div class="notam-item">` +
+            `<span class="notam-airport">${esc(n.airport)}</span> — ${esc(n.text)}</div>`).join('')
+        : `<div class="notam-item">None reported</div>`;
+
+      const route = [
+        data.aircraft ? esc(data.aircraft) : null,
+        data.altitude ? `${Number(data.altitude).toLocaleString()} ft` : null
+      ].filter(Boolean).join(' · ');
+
+      document.getElementById('briefingRender').innerHTML = `
+        ${route ? `<div class="section"><div class="section-title">Flight</div>
+          <div class="notam-item">${esc(w.departure?.airport || '')} →
+          ${esc(w.arrival?.airport || '')} · ${route}</div></div>` : ''}
+
+        <div class="section">
+          <div class="section-title">Weather — surface</div>
+          ${stationCard('Departure', w.departure?.airport || '—', w.departure?.metar)}
+          ${stationCard('Arrival', w.arrival?.airport || '—', w.arrival?.metar)}
+        </div>
+
+        <div class="section">
+          <div class="section-title">Winds &amp; temps aloft</div>
+          ${windCard('Departure', winds.departure)}
+          ${windCard('Arrival', winds.arrival)}
+        </div>
+
+        <div class="section">
+          <div class="section-title">NOTAMs
+            ${notamsMock ? '<span class="badge-mock">PLACEHOLDER DATA</span>' : ''}
+          </div>
+          ${notamHtml}
+        </div>
+
+        <div class="section">
+          <div class="section-title">Airspace
+            ${sua.source === 'placeholder' ? '<span class="badge-mock">NOT CHECKED</span>' : ''}
+          </div>
+          <div class="notam-item">${esc(sua.message || 'No data')}</div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Advisory</div>
+          <div class="advisory">
+            ${cats.length ? `<strong>Reported flight category:</strong> ${esc(cats.join(' / '))}.<br>` : ''}
+            This is <strong>not an official FAA weather briefing</strong> and does not
+            substitute for one. The pilot in command is responsible for the go/no-go decision.
+          </div>
+        </div>`;
+    }
+
+    document.getElementById('toggleRaw').addEventListener('click', (e) => {
+      const el = document.getElementById('briefingText');
+      const open = el.style.display !== 'none';
+      el.style.display = open ? 'none' : 'block';
+      e.target.textContent = open ? 'Show full briefing text ▾' : 'Hide full briefing text ▴';
+    });
+
+    // Text-to-speech (browser SpeechSynthesis fallback until Albert integrated)
+    document.getElementById('speakButton').addEventListener('click', () => {
+      const text = document.getElementById('briefingText').textContent;
+      if ('speechSynthesis' in window) {
+        speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.9;
+        speechSynthesis.speak(utterance);
+      }
+    });
+
+    // Initialize on load
+    detectLocation();
+  </script>
+</body>
+</html>
