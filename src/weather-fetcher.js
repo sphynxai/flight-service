@@ -36,15 +36,29 @@ export async function fetchMETAR(airport) {
     const url = `${NOAA_API_BASE}/metar?${params}`;
     const response = await axios.get(url, { timeout: 10000 });
 
-    const raw = response.data?.[0]?.rawOb;
-    if (!raw) return null;
+    const ob = response.data?.[0];
+    if (!ob?.rawOb) return null;
 
-    cache.set(cacheKey, {
-      data: raw,
-      timestamp: Date.now()
-    });
+    // Only pass through fields NOAA itself decoded. Hand-rolling a METAR parser
+    // in a flight tool risks mis-decoding safety-relevant data.
+    const data = {
+      raw: ob.rawOb,
+      station: ob.name || airport.toUpperCase(),
+      fltCat: ob.fltCat || null,
+      wdir: ob.wdir,
+      wspd: ob.wspd,
+      wgst: ob.wgst,
+      visib: ob.visib,
+      wxString: ob.wxString || null,
+      temp: ob.temp,
+      dewp: ob.dewp,
+      altim: ob.altim,
+      clouds: Array.isArray(ob.clouds) ? ob.clouds : []
+    };
 
-    return raw;
+    cache.set(cacheKey, { data, timestamp: Date.now() });
+
+    return data;
   } catch (err) {
     console.error(`METAR fetch failed for ${airport}:`, err.message);
     return null;
@@ -96,18 +110,8 @@ export async function getWeatherBriefing(departure, arrival) {
     fetchTAF(arrival)
   ]);
 
-  const briefing = {
-    departure: {
-      airport: departure,
-      metar: depMetar || 'Unable to fetch METAR',
-      taf: depTaf || 'Unable to fetch TAF'
-    },
-    arrival: {
-      airport: arrival,
-      metar: arrMetar || 'Unable to fetch METAR',
-      taf: arrTaf || 'Unable to fetch TAF'
-    }
+  return {
+    departure: { airport: departure, metar: depMetar, taf: depTaf },
+    arrival: { airport: arrival, metar: arrMetar, taf: arrTaf }
   };
-
-  return briefing;
 }

@@ -28,13 +28,15 @@ export async function fetchNOTAMs(departure, arrival) {
     const notams = [
       {
         airport: departure,
-        text: `NOTAM: Check departure airport ATIS for active runways`,
-        severity: 'info'
+        text: `Check departure airport ATIS for active runways`,
+        severity: 'info',
+        source: 'placeholder'
       },
       {
         airport: arrival,
-        text: `NOTAM: Check arrival airport for any temporary closures`,
-        severity: 'info'
+        text: `Check arrival airport for any temporary closures`,
+        severity: 'info',
+        source: 'placeholder'
       }
     ];
 
@@ -61,9 +63,11 @@ export async function fetchSUA(latitude, longitude, radius = 50) {
   try {
     // Placeholder: in production, query SUA database
     // Could integrate OpenFlight API or FAA's airspace layers
+    // Must not read as a verified negative — nothing is actually queried yet.
     const sua = {
       nearby: [],
-      message: 'No active SUAs reported in route'
+      message: 'Special Use Airspace not checked — no SUA data source connected',
+      source: 'placeholder'
     };
 
     cache.set(cacheKey, { data: sua, timestamp: Date.now() });

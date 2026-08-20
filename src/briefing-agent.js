@@ -70,17 +70,48 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
   }
 }
 
+// Formats only NOAA-decoded fields — no local METAR parsing.
+function describeStation(label, icao, m) {
+  if (!m) return `${label} (${icao}): weather unavailable`;
+
+  const bits = [];
+  if (m.fltCat) bits.push(m.fltCat);
+
+  if (m.wdir === 0 && m.wspd === 0) {
+    bits.push('Wind calm');
+  } else if (m.wspd != null) {
+    const dir = m.wdir === 'VRB' ? 'variable' : `${m.wdir}°`;
+    bits.push(`Wind ${dir} at ${m.wspd}kt${m.wgst ? ` gusting ${m.wgst}kt` : ''}`);
+  }
+
+  if (m.visib != null) bits.push(`Vis ${m.visib}SM`);
+  if (m.wxString) bits.push(`Wx ${m.wxString}`);
+
+  const ceiling = m.clouds.find(c => c.cover === 'BKN' || c.cover === 'OVC');
+  bits.push(ceiling
+    ? `Ceiling ${ceiling.cover} ${ceiling.base.toLocaleString()}ft`
+    : 'No ceiling reported');
+
+  if (m.temp != null) bits.push(`${Math.round(m.temp)}°C/${Math.round(m.dewp)}°C`);
+  if (m.altim != null) bits.push(`Altimeter ${(m.altim / 33.8639).toFixed(2)}inHg`);
+
+  return `${label} (${icao}): ${bits.join(' · ')}\n  ${m.raw}`;
+}
+
 function fallbackBriefing({ departure, arrival, altitude, weather, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
   let weatherSummary = 'Unable to fetch weather data';
   let notamSummary = 'No NOTAMs reported';
   let suaSummary = 'No special use airspace alerts';
+  let cats = [];
 
   try {
     const w = typeof weather === 'string' ? JSON.parse(weather) : weather;
-    const depMetar = w.departure?.metar || 'N/A';
-    const arrMetar = w.arrival?.metar || 'N/A';
-    weatherSummary = `Departure (${departure}): ${depMetar}\nArrival (${arrival}): ${arrMetar}`;
+    weatherSummary = [
+      describeStation('Departure', departure, w.departure?.metar),
+      describeStation('Arrival', arrival, w.arrival?.metar)
+    ].join('\n\n');
+    cats = [w.departure?.metar?.fltCat, w.arrival?.metar?.fltCat].filter(Boolean);
   } catch (e) {
     // Keep default
   }
@@ -103,6 +134,12 @@ function fallbackBriefing({ departure, arrival, altitude, weather, notams, sua }
     // Keep default
   }
 
+  // No go/no-go verdict: this service has no basis to issue one. State the
+  // observed flight category and leave the decision with the PIC.
+  const catLine = cats.length
+    ? `Reported flight category: ${cats.join(' / ')}.`
+    : 'Flight category unavailable.';
+
   return `BRIEFING: ${departure} to ${arrival} at ${altitude}
 
 WEATHER:
@@ -114,9 +151,10 @@ ${notamSummary}
 AIRSPACE:
 ${suaSummary}
 
-RECOMMENDATION:
-Safe to proceed. This briefing is for reference only—check official sources before flight.
-Pilot in command retains full authority and responsibility.`;
+ADVISORY:
+${catLine}
+This is not an official FAA weather briefing and does not substitute for one.
+The pilot in command is responsible for the go/no-go decision.`;
 }
 
 export async function streamBriefing(briefingData) {
