@@ -321,6 +321,7 @@
       const departure = document.getElementById('departure').value.toUpperCase();
       const arrival = document.getElementById('arrival').value.toUpperCase();
       const altitude = document.getElementById('altitude').value;
+      const aircraft = document.getElementById('aircraft').value.toUpperCase();
       const latitude = parseFloat(document.getElementById('latitude').value);
       const longitude = parseFloat(document.getElementById('longitude').value);
 
@@ -331,7 +332,7 @@
         const response = await fetch('/api/briefing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ departure, arrival, altitude, latitude, longitude })
+          body: JSON.stringify({ departure, arrival, altitude, aircraft, latitude, longitude })
         });
 
         if (!response.ok) throw new Error('Request failed');
@@ -394,8 +395,35 @@
       </div>`;
     }
 
+    function windCard(label, w) {
+      if (!w || !w.available) {
+        return `<div class="notam-item"><span class="notam-airport">${esc(w?.airport || label)}</span>` +
+               ` — winds aloft unavailable <span style="color:#8a93a0;">` +
+               `(${esc(w?.reason || 'no data')})</span></div>`;
+      }
+      const wind = w.lightVariable ? 'Light &amp; variable' : `${esc(w.dir)}° at ${esc(w.speed)} kt`;
+      // Must be visible when the forecast level differs from the filed altitude.
+      const levelText = w.requestedAltitude && w.requestedAltitude !== w.level
+        ? `${w.level.toLocaleString()} ft — nearest to filed ${w.requestedAltitude.toLocaleString()} ft`
+        : `${w.level.toLocaleString()} ft`;
+      return `<div class="station">
+        <div class="station-head">
+          <span class="station-id">${esc(w.airport)}</span>
+          <span class="cat" style="background:#37474f;">FL${String(w.level / 100).padStart(3, '0')}</span>
+          <span class="station-name">FB station ${esc(w.station)}${w.substituted ? ' — nearest available' : ''}</span>
+        </div>
+        <div class="wx-grid">
+          ${wxItem('Wind', w.lightVariable ? 'Light & variable' : `${w.dir}° at ${w.speed} kt`)}
+          ${wxItem('Temp', w.temp != null ? `${w.temp}°C` : null)}
+          ${wxItem('Level', levelText)}
+        </div>
+        <div class="raw">${esc(w.raw)}${w.validity ? ' · ' + esc(w.validity) : ''}</div>
+      </div>`;
+    }
+
     function renderBriefing(data) {
       const w = data.weather || {};
+      const winds = data.winds || {};
       const notams = data.notams || [];
       const sua = data.sua || {};
       const cats = [w.departure?.metar?.fltCat, w.arrival?.metar?.fltCat].filter(Boolean);
@@ -406,11 +434,26 @@
             `<span class="notam-airport">${esc(n.airport)}</span> — ${esc(n.text)}</div>`).join('')
         : `<div class="notam-item">None reported</div>`;
 
+      const route = [
+        data.aircraft ? esc(data.aircraft) : null,
+        data.altitude ? `${Number(data.altitude).toLocaleString()} ft` : null
+      ].filter(Boolean).join(' · ');
+
       document.getElementById('briefingRender').innerHTML = `
+        ${route ? `<div class="section"><div class="section-title">Flight</div>
+          <div class="notam-item">${esc(w.departure?.airport || '')} →
+          ${esc(w.arrival?.airport || '')} · ${route}</div></div>` : ''}
+
         <div class="section">
-          <div class="section-title">Weather</div>
+          <div class="section-title">Weather — surface</div>
           ${stationCard('Departure', w.departure?.airport || '—', w.departure?.metar)}
           ${stationCard('Arrival', w.arrival?.airport || '—', w.arrival?.metar)}
+        </div>
+
+        <div class="section">
+          <div class="section-title">Winds &amp; temps aloft</div>
+          ${windCard('Departure', winds.departure)}
+          ${windCard('Arrival', winds.arrival)}
         </div>
 
         <div class="section">

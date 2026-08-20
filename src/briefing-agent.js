@@ -10,26 +10,32 @@ export async function generateBriefing({
   departure,
   arrival,
   altitude,
+  aircraft,
   latitude,
   longitude,
   weather,
+  winds,
   notams,
   sua
 }) {
   if (!ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY not configured; returning structured fallback');
-    return fallbackBriefing({ departure, arrival, altitude, weather, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua });
   }
 
   const prompt = `You are a flight briefing specialist. Provide a concise, pilot-friendly preflight briefing for:
 
 Departure: ${departure}
 Arrival: ${arrival}
-Altitude: ${altitude || 'VFR'}
+Cruising altitude: ${altitude || 'VFR'}
+Aircraft type: ${aircraft || 'not specified'}
 Aircraft location: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}
 
 WEATHER (METAR/TAF):
 ${weather || 'Unable to fetch'}
+
+WINDS AND TEMPERATURES ALOFT (NOAA FB product):
+${winds || 'Unavailable'}
 
 NOTAMs:
 ${notams || 'None reported'}
@@ -39,9 +45,17 @@ ${sua || 'None nearby'}
 
 Format your response as:
 1. WEATHER SUMMARY (2-3 sentences max)
-2. NOTAMS (bullet list)
-3. AIRSPACE ALERTS (bullet list)
-4. RECOMMENDATION (Go/No-go advisory — pilot retains full authority)
+2. WINDS ALOFT (relevant to the filed cruising altitude)
+3. NOTAMS (bullet list)
+4. AIRSPACE ALERTS (bullet list)
+5. ADVISORY
+
+Rules you must follow:
+- Do NOT issue a go/no-go verdict. State conditions and note that the pilot in
+  command owns that decision.
+- Any item marked source "placeholder" is scaffolding, NOT live data. Say so
+  plainly rather than presenting it as a real notice or a verified all-clear.
+- Do not assert anything the supplied data does not support.
 
 Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
 
@@ -66,8 +80,22 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
     return response.data.content[0].text;
   } catch (err) {
     console.error('AlbertAI API error:', err.message);
-    return fallbackBriefing({ departure, arrival, altitude, weather, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua });
   }
+}
+
+function describeWinds(label, w) {
+  if (!w?.available) {
+    return `${label}: winds aloft unavailable (${w?.reason || 'no data'})`;
+  }
+  const wind = w.lightVariable ? 'light and variable' : `${w.dir}° at ${w.speed}kt`;
+  const station = w.substituted ? `${w.station} (nearest FB station)` : w.station;
+  const temp = w.temp != null ? `, ${w.temp}°C` : '';
+  const level = w.requestedAltitude && w.requestedAltitude !== w.level
+    ? `${w.level.toLocaleString()}ft (nearest to filed ${w.requestedAltitude.toLocaleString()}ft)`
+    : `${w.level.toLocaleString()}ft`;
+  return `${label}: ${level} — ${wind}${temp}` +
+         `\n  station ${station}, raw ${w.raw}`;
 }
 
 // Formats only NOAA-decoded fields — no local METAR parsing.
@@ -98,12 +126,25 @@ function describeStation(label, icao, m) {
   return `${label} (${icao}): ${bits.join(' · ')}\n  ${m.raw}`;
 }
 
-function fallbackBriefing({ departure, arrival, altitude, weather, notams, sua }) {
+function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
   let weatherSummary = 'Unable to fetch weather data';
+  let windSummary = 'Winds aloft unavailable';
   let notamSummary = 'No NOTAMs reported';
   let suaSummary = 'No special use airspace alerts';
   let cats = [];
+
+  try {
+    const wa = typeof winds === 'string' ? JSON.parse(winds) : winds;
+    if (wa) {
+      windSummary = [
+        describeWinds(`Departure (${departure})`, wa.departure),
+        describeWinds(`Arrival (${arrival})`, wa.arrival)
+      ].join('\n');
+    }
+  } catch (e) {
+    // Keep default
+  }
 
   try {
     const w = typeof weather === 'string' ? JSON.parse(weather) : weather;
@@ -140,10 +181,16 @@ function fallbackBriefing({ departure, arrival, altitude, weather, notams, sua }
     ? `Reported flight category: ${cats.join(' / ')}.`
     : 'Flight category unavailable.';
 
-  return `BRIEFING: ${departure} to ${arrival} at ${altitude}
+  const head = `BRIEFING: ${departure} to ${arrival} at ${altitude}` +
+               (aircraft ? ` — ${aircraft}` : '');
+
+  return `${head}
 
 WEATHER:
 ${weatherSummary}
+
+WINDS ALOFT:
+${windSummary}
 
 NOTAMS:
 ${notamSummary}

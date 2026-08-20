@@ -4,6 +4,7 @@ import { dirname } from 'path';
 import { config } from 'dotenv';
 import { getWeatherBriefing } from './weather-fetcher.js';
 import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
+import { fetchWindsAloft } from './winds-fetcher.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -24,27 +25,36 @@ app.get('/health', (req, res) => {
 // Briefing endpoint: accepts geolocation + route, returns weather/NOTAMs/SUA
 app.post('/api/briefing', async (req, res) => {
   try {
-    const { latitude, longitude, departure, arrival, altitude } = req.body;
+    const { latitude, longitude, departure, arrival, altitude, aircraft } = req.body;
 
     if (!departure || !arrival) {
       return res.status(400).json({ error: 'departure and arrival ICAO required' });
     }
 
-    // Fetch weather, NOTAMs, SUA in parallel
-    const [weather, notams, sua] = await Promise.all([
-      getWeatherBriefing(departure.toUpperCase(), arrival.toUpperCase()),
-      fetchNOTAMs(departure.toUpperCase(), arrival.toUpperCase()),
-      fetchSUA(latitude, longitude)
+    const dep = departure.toUpperCase();
+    const arr = arrival.toUpperCase();
+
+    // Fetch weather, NOTAMs, SUA, winds aloft in parallel
+    const [weather, notams, sua, depWinds, arrWinds] = await Promise.all([
+      getWeatherBriefing(dep, arr),
+      fetchNOTAMs(dep, arr),
+      fetchSUA(latitude, longitude),
+      fetchWindsAloft(dep, altitude),
+      fetchWindsAloft(arr, altitude)
     ]);
+
+    const winds = { departure: depWinds, arrival: arrWinds };
 
     // Synthesize briefing via AlbertAI
     const briefing = await generateBriefing({
-      departure: departure.toUpperCase(),
-      arrival: arrival.toUpperCase(),
+      departure: dep,
+      arrival: arr,
       altitude: altitude || 'VFR',
+      aircraft: aircraft ? aircraft.toUpperCase() : null,
       latitude,
       longitude,
       weather: JSON.stringify(weather),
+      winds: JSON.stringify(winds),
       notams: JSON.stringify(notams),
       sua: JSON.stringify(sua)
     });
@@ -53,8 +63,11 @@ app.post('/api/briefing', async (req, res) => {
       status: 'ok',
       briefing,
       weather,
+      winds,
       notams,
       sua,
+      aircraft: aircraft ? aircraft.toUpperCase() : null,
+      altitude: altitude || null,
       location: { latitude, longitude },
       timestamp: new Date().toISOString()
     });
