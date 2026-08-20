@@ -884,6 +884,41 @@
           ${windCard('Arrival', winds.arrival)}
         </div>
 
+        ${(() => {
+          const t = data.tfrs;
+          if (!t) return '';
+          let body;
+          if (!t.available) {
+            body = `<div class="notam-item" style="border-left-color:#f9a825;">Temporary flight ` +
+                   `restrictions not checked <span style="color:#8a93a0;">(${esc(t.reason || 'no data')})</span></div>`;
+          } else if (!t.tfrs.length) {
+            body = `<div class="notam-item">No TFRs within ${esc(t.corridorNm)} nm of the route. ` +
+                   `<span style="color:#8a93a0;">${esc(t.totalActive)} active nationally, ` +
+                   `${esc(t.checked)} checked in ${esc((t.states || []).join('/'))}.</span></div>`;
+          } else {
+            body = t.tfrs.map(r => {
+              const bits = [];
+              if (r.upperFt != null) bits.push(`surface to ${Number(r.upperFt).toLocaleString()} ft`);
+              if (r.nearestNm != null) bits.push(`${r.nearestNm} nm from route`);
+              if (r.geometryUnknown) bits.push('extent unknown, shown to be safe');
+              // VIP and SECURITY restrictions are the ones that bust a licence.
+              const hot = /VIP|SECURITY|EMERGENCY/i.test(r.type || '');
+              return `<div class="notam-item" style="border-left-color:${hot ? '#c62828' : '#f9a825'};">` +
+                `<span class="notam-airport">${esc(r.type || 'TFR')} ${esc(r.id || '')}</span> — ` +
+                `${esc(r.city || r.state || '')}<br>` +
+                `<span style="color:#5a6472;font-size:12px;">${esc(bits.join(' · '))}</span></div>`;
+            }).join('');
+          }
+          if (t.available && t.truncated) {
+            body += `<div class="notam-item" style="border-left-color:#f9a825;color:#8a6100;">` +
+              `${esc(t.truncated)} further TFR${t.truncated > 1 ? 's' : ''} in these states were not ` +
+              `checked for extent. Confirm against tfr.faa.gov.</div>`;
+          }
+          const n = t.available ? t.tfrs.length : 0;
+          return `<div class="section"><div class="section-title">Temporary flight restrictions` +
+            `${n ? ` — ${n} on route` : ''}</div>${body}</div>`;
+        })()}
+
         <div class="section">
           <div class="section-title">NOTAMs
             ${notamsMock ? '<span class="badge-mock">PLACEHOLDER DATA</span>' : ''}

@@ -17,12 +17,13 @@ export async function generateBriefing({
   routeWeather,
   winds,
   hazards,
+  tfrs,
   notams,
   sua
 }) {
   if (!ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY not configured; returning structured fallback');
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, tfrs, notams, sua });
   }
 
   const prompt = `You are a flight briefing specialist. Provide a concise, pilot-friendly preflight briefing for:
@@ -85,7 +86,7 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
     return response.data.content[0].text;
   } catch (err) {
     console.error('AlbertAI API error:', err.message);
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, tfrs, notams, sua });
   }
 }
 
@@ -168,6 +169,34 @@ export function describeHazards(h) {
 
   if (h.partial) {
     lines.push(`⚠ ${h.partial.join(' and ')} source unavailable — this list may be incomplete.`);
+  }
+
+  return lines.join('\n');
+}
+
+export function describeTfrs(t) {
+  if (!t || !t.available) {
+    return `Temporary flight restrictions not checked (${t?.reason || 'no data'})`;
+  }
+
+  const lines = [];
+  for (const r of t.tfrs) {
+    const band = r.upperFt != null
+      ? ` — surface to ${Number(r.upperFt).toLocaleString()}ft`
+      : '';
+    const near = r.nearestNm != null ? ` · ${r.nearestNm}nm from route` : '';
+    const geo = r.geometryUnknown ? ' · extent unknown, shown to be safe' : '';
+    lines.push(`• ${r.type || 'TFR'} ${r.id} — ${r.city || r.state || ''}${band}${near}${geo}`);
+    if (r.description) lines.push(`    ${r.description}`);
+  }
+
+  if (!lines.length) {
+    lines.push(`No TFRs within ${t.corridorNm}nm of the route ` +
+               `(${t.totalActive} active nationally, ${t.checked} checked in ${t.states.join('/')}).`);
+  }
+  if (t.truncated) {
+    lines.push(`⚠ ${t.truncated} further TFR${t.truncated > 1 ? 's' : ''} in these states were not ` +
+               `checked for extent. Confirm against tfr.faa.gov.`);
   }
 
   return lines.join('\n');
@@ -261,11 +290,19 @@ export function describeStation(label, icao, m, taf = null) {
   return lines.join('\n');
 }
 
-function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua }) {
+function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, tfrs, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
   let weatherSummary = 'Unable to fetch weather data';
   let windSummary = 'Winds aloft unavailable';
   let hazardSummary = 'Adverse conditions not checked';
+  let tfrSummary = 'TFRs not checked';
+
+  try {
+    const tf = typeof tfrs === 'string' ? JSON.parse(tfrs) : tfrs;
+    if (tf) tfrSummary = describeTfrs(tf);
+  } catch (e) {
+    // Keep default
+  }
   let routeSummary = 'Enroute stations not checked';
 
   try {
@@ -348,6 +385,9 @@ ${routeSummary}
 
 WINDS ALOFT:
 ${windSummary}
+
+TEMPORARY FLIGHT RESTRICTIONS:
+${tfrSummary}
 
 NOTAMS:
 ${notamSummary}

@@ -1015,6 +1015,161 @@ function build_voice_briefing(array $d): string {
     return implode(' ', $lines);
 }
 
+// ---------------------------------------------------------------- TFRs ----
+// Mirror of src/tfr-fetcher.js. The TFR list needs NO authentication (unlike
+// the FAA NOTAM API, which is regulation-gated and 401s). Two stages: the list
+// carries no geometry, so detail XML is fetched only for state-matched
+// candidates. Pre-filter is by state, so a TFR just across a state line can be
+// missed — the UI says so.
+
+const TFR_LIST = 'https://tfr.faa.gov/tfrapi/exportTfrList';
+const TFR_MAX_DETAIL = 12;
+
+/** "46.9N" -> 46.9 ; "115.20833333W" -> -115.208 */
+function tfr_coord(?string $t): ?float {
+    if (!$t) return null;
+    if (!preg_match('/^([\d.]+)([NSEW])$/i', trim($t), $m)) return null;
+    $n = (float)$m[1];
+    if ($n > 180) return null; // guard a DMS value read as decimal
+    return (strtoupper($m[2]) === 'S' || strtoupper($m[2]) === 'W') ? -$n : $n;
+}
+
+/** "Dallas-Ft Worth Intl, TX, US" -> "TX" */
+function tfr_state_from_name(?string $name): ?string {
+    if (!$name) return null;
+    $p = array_map('trim', explode(',', $name));
+    $st = count($p) >= 2 ? $p[count($p) - 2] : null;
+    return ($st && preg_match('/^[A-Z]{2}$/', $st)) ? $st : null;
+}
+
+function tfr_tag(string $xml, string $name): ?string {
+    return preg_match("#<$name>([^<]*)</$name>#", $xml, $m) ? trim($m[1]) : null;
+}
+
+function tfr_parse_detail(string $xml): array {
+    $points = [];
+    if (preg_match_all('#<Avx>(.*?)</Avx>#s', $xml, $ms)) {
+        foreach ($ms[1] as $blk) {
+            $la = tfr_coord(tfr_tag($blk, 'geoLat'));
+            $lo = tfr_coord(tfr_tag($blk, 'geoLong'));
+            if ($la !== null && $lo !== null) $points[] = ['lat' => $la, 'lon' => $lo];
+        }
+    }
+    $up = tfr_tag($xml, 'valDistVerUpper');
+    $lw = tfr_tag($xml, 'valDistVerLower');
+    return [
+        'points' => $points,
+        'city' => tfr_tag($xml, 'txtNameCity'),
+        'effective' => tfr_tag($xml, 'dateEffective'),
+        'expires' => tfr_tag($xml, 'dateExpire'),
+        'lowerFt' => $lw === null ? null : (float)$lw,
+        'upperFt' => $up === null ? null : (float)$up,
+    ];
+}
+
+/** Nearest vertex-to-route distance. Under-measures a large polygon the route
+ *  crosses, so it is paired with a generous threshold — bias toward showing. */
+function tfr_nearest_nm(array $points, array $route): ?float {
+    $best = null;
+    foreach ($points as $p) {
+        foreach ($route as $r) {
+            $d = distance_nm($p, $r);
+            if ($d !== null && ($best === null || $d < $best)) $best = $d;
+        }
+    }
+    return $best;
+}
+
+function fetch_tfrs(array $routePoints, array $states, float $corridorNm = 100): array {
+    $usable = [];
+    foreach ($routePoints as $p) {
+        if (is_numeric($p['lat'] ?? null) && is_numeric($p['lon'] ?? null)) $usable[] = $p;
+    }
+    if (!$usable) return ['available' => false, 'reason' => 'no route geometry', 'tfrs' => [], 'checked' => 0];
+
+    $res = fetch_all(['l' => TFR_LIST]);
+    if ($res['l'] === null) {
+        // Must not read as "no TFRs out there".
+        return ['available' => false, 'reason' => 'TFR source unavailable', 'tfrs' => [], 'checked' => 0];
+    }
+    $list = json_decode($res['l'], true);
+    if (!is_array($list)) {
+        return ['available' => false, 'reason' => 'TFR source unavailable', 'tfrs' => [], 'checked' => 0];
+    }
+
+    $wanted = array_flip(array_map('strtoupper', array_filter($states)));
+    $cands = [];
+    foreach ($list as $t) {
+        if (isset($wanted[strtoupper((string)($t['state'] ?? ''))])) $cands[] = $t;
+    }
+
+    $truncated = max(0, count($cands) - TFR_MAX_DETAIL);
+    $cands = array_slice($cands, 0, TFR_MAX_DETAIL);
+
+    $urls = [];
+    foreach ($cands as $i => $t) {
+        $urls[$i] = 'https://tfr.faa.gov/download/detail_'
+                  . str_replace('/', '_', (string)$t['notam_id']) . '.xml';
+    }
+    $bodies = $urls ? fetch_all($urls) : [];
+
+    $out = [];
+    foreach ($cands as $i => $t) {
+        $body = $bodies[$i] ?? null;
+        $d = $body ? tfr_parse_detail($body) : ['points' => [], 'city' => null,
+             'effective' => null, 'expires' => null, 'lowerFt' => null, 'upperFt' => null];
+        $near = $d['points'] ? tfr_nearest_nm($d['points'], $usable) : null;
+        // Unknown geometry is kept rather than dropped silently.
+        if ($near !== null && $near > $corridorNm) continue;
+
+        $out[] = [
+            'id' => $t['notam_id'] ?? null,
+            'type' => $t['type'] ?? null,
+            'facility' => $t['facility'] ?? null,
+            'state' => $t['state'] ?? null,
+            'city' => $d['city'],
+            'description' => $t['description'] ?? null,
+            'lowerFt' => $d['lowerFt'], 'upperFt' => $d['upperFt'],
+            'effective' => $d['effective'], 'expires' => $d['expires'],
+            'nearestNm' => $near === null ? null : (int)round($near),
+            'geometryUnknown' => !$d['points'],
+        ];
+    }
+
+    usort($out, fn($a, $b) => ($a['nearestNm'] ?? 1e9) <=> ($b['nearestNm'] ?? 1e9));
+
+    return [
+        'available' => true, 'corridorNm' => $corridorNm,
+        'states' => array_keys($wanted), 'totalActive' => count($list),
+        'checked' => count($cands), 'truncated' => $truncated, 'tfrs' => $out,
+    ];
+}
+
+function describe_tfrs(?array $t): string {
+    if (!$t || empty($t['available'])) {
+        return 'Temporary flight restrictions not checked (' . ($t['reason'] ?? 'no data') . ')';
+    }
+    $lines = [];
+    foreach ($t['tfrs'] as $r) {
+        $band = $r['upperFt'] !== null ? ' — surface to ' . number_format($r['upperFt']) . 'ft' : '';
+        $near = $r['nearestNm'] !== null ? ' · ' . $r['nearestNm'] . 'nm from route' : '';
+        $geo = $r['geometryUnknown'] ? ' · extent unknown, shown to be safe' : '';
+        $lines[] = '• ' . ($r['type'] ?: 'TFR') . ' ' . $r['id'] . ' — '
+                 . ($r['city'] ?: $r['state'] ?: '') . $band . $near . $geo;
+        if ($r['description']) $lines[] = '    ' . $r['description'];
+    }
+    if (!$lines) {
+        $lines[] = 'No TFRs within ' . (int)$t['corridorNm'] . 'nm of the route ('
+                 . $t['totalActive'] . ' active nationally, ' . $t['checked']
+                 . ' checked in ' . implode('/', $t['states']) . ').';
+    }
+    if (!empty($t['truncated'])) {
+        $lines[] = '⚠ ' . $t['truncated'] . ' further TFR' . ($t['truncated'] > 1 ? 's' : '')
+                 . ' in these states were not checked for extent. Confirm against tfr.faa.gov.';
+    }
+    return implode("\n", $lines);
+}
+
 // --------------------------------------------------------- flight time ----
 // Mirror of src/flight-time.js. TAF semantics that must not be flattened:
 //   FM lines REPLACE the prevailing forecast.
@@ -1481,6 +1636,14 @@ $routeWeather = fetch_route_metars($hazards['bounds'] ?? null, [$dep, $arr], [
                'lon' => $weather['arrival']['metar']['lon'] ?? null],
 ]);
 
+// TFRs — states from both endpoints and every corridor station.
+$routeStates = array_filter(array_merge(
+    [tfr_state_from_name($weather['departure']['metar']['station'] ?? null),
+     tfr_state_from_name($weather['arrival']['metar']['station'] ?? null)],
+    array_map(fn($s) => tfr_state_from_name($s['name'] ?? null), $routeWeather['stations'] ?? [])
+));
+$tfrs = fetch_tfrs($endpoints, array_values(array_unique($routeStates)));
+
 $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "\n\nWEATHER:\n"
     . describe_station('Departure', $dep, $weather['departure']['metar'], $weather['departure']['taf']) . "\n\n"
@@ -1489,6 +1652,7 @@ $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "\n\nWINDS ALOFT:\n"
     . describe_winds("Departure ($dep)", $winds['departure']) . "\n"
     . describe_winds("Arrival ($arr)", $winds['arrival'])
+    . "\n\nTEMPORARY FLIGHT RESTRICTIONS:\n" . describe_tfrs($tfrs)
     . "\n\nNOTAMS:\n"
     . implode("\n", array_map(fn($n) => "• {$n['airport']}: {$n['text']}", $notams))
     . "\n\nAIRSPACE:\n" . $sua['message']
@@ -1541,6 +1705,7 @@ echo json_encode([
     'weather'   => $weather,
     'winds'     => $winds,
     'hazards'   => $hazards,
+    'tfrs'      => $tfrs,
     'routeWeather' => $routeWeather,
     'notams'    => $notams,
     'sua'       => $sua,

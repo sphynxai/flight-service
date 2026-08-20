@@ -9,6 +9,7 @@ import { fetchHazards, positionIsOnRoute, distanceNm } from './hazards-fetcher.j
 import { buildVoiceBriefing } from './voice-briefing.js';
 import { buildFlightPlan, prefillFromBriefing } from './flight-plan.js';
 import { resolveFlightTimes, forecastAt, summarisePeriod, scanWindow } from './flight-time.js';
+import { fetchTfrs, stateFromStationName } from './tfr-fetcher.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -86,6 +87,17 @@ app.post('/api/briefing', async (req, res) => {
       }
     );
 
+    // TFRs. States come from both endpoints and every corridor station, so the
+    // pre-filter covers the states the route actually crosses. Must resolve
+    // before the briefing is synthesised, which consumes it.
+    const routeStates = [
+      stateFromStationName(weather.departure?.metar?.station),
+      stateFromStationName(weather.arrival?.metar?.station),
+      ...(routeWeather.stations || []).map(s => stateFromStationName(s.name))
+    ].filter(Boolean);
+
+    const tfrs = await fetchTfrs(endpoints, [...new Set(routeStates)]);
+
     // Synthesize briefing via AlbertAI
     const briefing = await generateBriefing({
       departure: dep,
@@ -98,6 +110,7 @@ app.post('/api/briefing', async (req, res) => {
       routeWeather: JSON.stringify(routeWeather),
       winds: JSON.stringify(winds),
       hazards: JSON.stringify(hazards),
+      tfrs: JSON.stringify(tfrs),
       notams: JSON.stringify(notams),
       sua: JSON.stringify(sua)
     });
@@ -159,6 +172,7 @@ app.post('/api/briefing', async (req, res) => {
       routeWeather,
       winds,
       hazards,
+      tfrs,
       notams,
       sua,
       aircraft: aircraft ? aircraft.toUpperCase() : null,
