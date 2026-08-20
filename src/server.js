@@ -2,6 +2,9 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config } from 'dotenv';
+import { getWeatherBriefing } from './weather-fetcher.js';
+import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
+import { generateBriefing } from './briefing-agent.js';
 
 config();
 
@@ -27,14 +30,36 @@ app.post('/api/briefing', async (req, res) => {
       return res.status(400).json({ error: 'departure and arrival ICAO required' });
     }
 
-    // Placeholder: will wire briefing agent next
+    // Fetch weather, NOTAMs, SUA in parallel
+    const [weather, notams, sua] = await Promise.all([
+      getWeatherBriefing(departure.toUpperCase(), arrival.toUpperCase()),
+      fetchNOTAMs(departure.toUpperCase(), arrival.toUpperCase()),
+      fetchSUA(latitude, longitude)
+    ]);
+
+    // Synthesize briefing via AlbertAI
+    const briefing = await generateBriefing({
+      departure: departure.toUpperCase(),
+      arrival: arrival.toUpperCase(),
+      altitude: altitude || 'VFR',
+      latitude,
+      longitude,
+      weather: JSON.stringify(weather),
+      notams: JSON.stringify(notams),
+      sua: JSON.stringify(sua)
+    });
+
     res.json({
       status: 'ok',
-      briefing: 'Flight briefing coming soon',
-      departure, arrival, altitude,
-      location: { latitude, longitude }
+      briefing,
+      weather,
+      notams,
+      sua,
+      location: { latitude, longitude },
+      timestamp: new Date().toISOString()
     });
   } catch (err) {
+    console.error('Briefing error:', err);
     res.status(500).json({ error: err.message });
   }
 });

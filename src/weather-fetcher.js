@@ -104,8 +104,18 @@ export async function getWeatherBriefing(departure, arrival) {
     fetchTAF(arrival)
   ]);
 
-  return {
-    departure: { metar: depMetar, taf: depTaf },
-    arrival: { metar: arrMetar, taf: arrTaf }
+  const briefing = {
+    departure: {
+      airport: departure,
+      metar: depMetar || 'Unable to fetch METAR',
+      taf: depTaf || 'Unable to fetch TAF'
+    },
+    arrival: {
+      airport: arrival,
+      metar: arrMetar || 'Unable to fetch METAR',
+      taf: arrTaf || 'Unable to fetch TAF'
+    }
   };
+
+  return briefing;
 }
