@@ -1,0 +1,92 @@
+{
+  "_comment": "NOAA-decoded METAR object -> the exact summary both implementations must render, compared as a whole string. Guards ceiling selection (first BKN/OVC, never FEW/SCT), the hPa->inHg conversion, wind wording, and rounding.",
+  "cases": [
+    {
+      "label": "Departure",
+      "icao": "KJFK",
+      "metar": {
+        "raw": "METAR KJFK 201751Z 17008KT 10SM -RA FEW046 BKN100 OVC200 27/19 A2999",
+        "fltCat": "VFR", "wdir": 170, "wspd": 8, "wgst": null,
+        "visib": "10+", "wxString": "-RA", "temp": 27.2, "dewp": 19.4, "altim": 1015.7,
+        "clouds": [
+          { "cover": "FEW", "base": 4600 },
+          { "cover": "BKN", "base": 10000 },
+          { "cover": "OVC", "base": 20000 }
+        ]
+      },
+      "expect": "Departure (KJFK): VFR · Wind 170° at 8kt · Vis 10+SM · Wx -RA · Ceiling BKN 10,000ft · 27°C/19°C · Altimeter 29.99inHg\n  METAR KJFK 201751Z 17008KT 10SM -RA FEW046 BKN100 OVC200 27/19 A2999",
+      "why": "ceiling is the FIRST BKN/OVC layer - FEW046 is lower but is not a ceiling"
+    },
+    {
+      "label": "Departure",
+      "icao": "KDFW",
+      "metar": {
+        "raw": "METAR KDFW 201753Z 18009G15KT 10SM FEW250 38/19 A2998",
+        "fltCat": "VFR", "wdir": 180, "wspd": 9, "wgst": 15,
+        "visib": "10+", "wxString": null, "temp": 37.8, "dewp": 19.4, "altim": 1015.4,
+        "clouds": [ { "cover": "FEW", "base": 25000 } ]
+      },
+      "expect": "Departure (KDFW): VFR · Wind 180° at 9kt gusting 15kt · Vis 10+SM · No ceiling reported · 38°C/19°C · Altimeter 29.98inHg\n  METAR KDFW 201753Z 18009G15KT 10SM FEW250 38/19 A2998",
+      "why": "gusts render; FEW-only means no ceiling; absent wxString must omit the Wx segment entirely"
+    },
+    {
+      "label": "Arrival",
+      "icao": "KMSP",
+      "metar": {
+        "raw": "METAR KMSP 201753Z 20011G18KT 9SM SCT120 BKN140 OVC250 24/15 A3002",
+        "fltCat": "VFR", "wdir": 200, "wspd": 11, "wgst": 18,
+        "visib": 9, "wxString": null, "temp": 23.9, "dewp": 15.0, "altim": 1016.3,
+        "clouds": [
+          { "cover": "SCT", "base": 12000 },
+          { "cover": "BKN", "base": 14000 },
+          { "cover": "OVC", "base": 25000 }
+        ]
+      },
+      "expect": "Arrival (KMSP): VFR · Wind 200° at 11kt gusting 18kt · Vis 9SM · Ceiling BKN 14,000ft · 24°C/15°C · Altimeter 30.01inHg\n  METAR KMSP 201753Z 20011G18KT 9SM SCT120 BKN140 OVC250 24/15 A3002",
+      "why": "SCT120 is lower than BKN140 but is not a ceiling; numeric (non-string) visibility"
+    },
+    {
+      "label": "Departure",
+      "icao": "KORD",
+      "metar": {
+        "raw": "METAR KORD 201753Z 00000KT 1/2SM FG OVC002 12/12 A2992",
+        "fltCat": "LIFR", "wdir": 0, "wspd": 0, "wgst": null,
+        "visib": "1/2", "wxString": "FG", "temp": 12.0, "dewp": 12.0, "altim": 1013.25,
+        "clouds": [ { "cover": "OVC", "base": 200 } ]
+      },
+      "expect": "Departure (KORD): LIFR · Wind calm · Vis 1/2SM · Wx FG · Ceiling OVC 200ft · 12°C/12°C · Altimeter 29.92inHg\n  METAR KORD 201753Z 00000KT 1/2SM FG OVC002 12/12 A2992",
+      "why": "calm wording; LIFR; standard sea-level pressure 1013.25 hPa must convert to exactly 29.92 inHg"
+    },
+    {
+      "label": "Departure",
+      "icao": "KDFW",
+      "metar": {
+        "raw": "METAR KDFW 201853Z VRB03KT 10SM FEW250 38/17 A2996",
+        "fltCat": "VFR", "wdir": "VRB", "wspd": 3, "wgst": null,
+        "visib": "10+", "wxString": null, "temp": 37.5, "dewp": 17.4, "altim": 1014.7,
+        "clouds": [ { "cover": "FEW", "base": 25000 } ]
+      },
+      "expect": "Departure (KDFW): VFR · Wind variable at 3kt · Vis 10+SM · No ceiling reported · 38°C/17°C · Altimeter 29.96inHg\n  METAR KDFW 201853Z VRB03KT 10SM FEW250 38/17 A2996",
+      "why": "variable wind direction must not render as \"VRB°\""
+    },
+    {
+      "label": "Arrival",
+      "icao": "PANC",
+      "metar": {
+        "raw": "METAR PANC 201753Z 09004KT 10SM BKN035 M02/M05 A2981",
+        "fltCat": "VFR", "wdir": 90, "wspd": 4, "wgst": null,
+        "visib": "10+", "wxString": null, "temp": -2.5, "dewp": -4.5, "altim": 1009.5,
+        "clouds": [ { "cover": "BKN", "base": 3500 } ]
+      },
+      "expect": "Arrival (PANC): VFR · Wind 90° at 4kt · Vis 10+SM · Ceiling BKN 3,500ft · -3°C/-5°C · Altimeter 29.81inHg\n  METAR PANC 201753Z 09004KT 10SM BKN035 M02/M05 A2981",
+      "why": "NEGATIVE HALF-VALUE ROUNDING. JS Math.round(-2.5) is -2 but PHP round(-2.5) is -3. Both must round half away from zero."
+    },
+    {
+      "label": "Departure",
+      "icao": "KXYZ",
+      "metar": null,
+      "expect": "Departure (KXYZ): weather unavailable",
+      "why": "missing observation degrades to a plain statement, never a fabricated all-clear"
+    }
+  ]
+}

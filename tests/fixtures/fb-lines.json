@@ -1,0 +1,78 @@
+{
+  "_comment": "Real FB station rows -> which altitude each column belongs to. This fixture tests COLUMN ALIGNMENT only, so expectations are level -> raw group; decoding of the groups themselves is covered by fb-groups.json. A whitespace-split implementation passes BRL/MSP and fails DEN/LAS.",
+  "cases": [
+    {
+      "line": "BRL 9900 3506+13 3209+07 3210+03 2919-07 2926-20 293534 294345 294756",
+      "id": "BRL",
+      "expect": {
+        "3000": "9900",
+        "6000": "3506+13",
+        "9000": "3209+07",
+        "12000": "3210+03",
+        "18000": "2919-07",
+        "24000": "2926-20",
+        "30000": "293534",
+        "34000": "294345",
+        "39000": "294756"
+      },
+      "why": "low-elevation station, all nine columns present"
+    },
+    {
+      "line": "MSP 2319 2519+13 2622+07 2723+01 2829-11 2937-21 295037 305548 305459",
+      "id": "MSP",
+      "expect": {
+        "3000": "2319",
+        "6000": "2519+13",
+        "9000": "2622+07",
+        "12000": "2723+01",
+        "18000": "2829-11",
+        "24000": "2937-21",
+        "30000": "295037",
+        "34000": "305548",
+        "39000": "305459"
+      },
+      "why": "the arrival airport in the live demo flight"
+    },
+    {
+      "line": "DEN              3316+20 3226+12 3120-07 3021-18 323034 313043 303355",
+      "id": "DEN",
+      "expect": {
+        "9000": "3316+20",
+        "12000": "3226+12",
+        "18000": "3120-07",
+        "24000": "3021-18",
+        "30000": "323034",
+        "34000": "313043",
+        "39000": "303355"
+      },
+      "why": "REGRESSION GUARD. Field elevation 5431ft, so 3000 and 6000 are omitted and the row begins at the 9000ft column. Splitting on whitespace reports this station's 9000ft wind as its 3000ft wind."
+    },
+    {
+      "line": "LAS      2109+26 2111+18 2010+11 1617-05 1409-17 990032 231443 223254",
+      "id": "LAS",
+      "expect": {
+        "6000": "2109+26",
+        "9000": "2111+18",
+        "12000": "2010+11",
+        "18000": "1617-05",
+        "24000": "1409-17",
+        "30000": "990032",
+        "34000": "231443",
+        "39000": "223254"
+      },
+      "why": "elevation 2181ft omits only the 3000ft column - a one-column shift, easier to miss than DEN's two"
+    },
+    {
+      "line": "FT  3000    6000    9000   12000   18000   24000  30000  34000  39000",
+      "id": null,
+      "expect": null,
+      "why": "the header row must not be parsed as a station"
+    },
+    {
+      "line": "DATA BASED ON 201200Z",
+      "id": null,
+      "expect": null,
+      "why": "bulletin preamble must not be parsed as a station"
+    }
+  ]
+}

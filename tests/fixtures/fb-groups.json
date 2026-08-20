@@ -1,0 +1,95 @@
+{
+  "_comment": "NOAA FB wind groups -> expected decode. Both the JS and PHP implementations must produce these exactly. null = must not decode.",
+  "cases": [
+    {
+      "raw": "731960",
+      "expect": { "dir": 230, "speed": 119, "temp": -60, "lightVariable": false },
+      "why": "dd 51-86 encodes wind >= 100kt: subtract 50 from dd, add 100 to speed. Missing this turns a jet core into a breeze."
+    },
+    {
+      "raw": "861045",
+      "expect": { "dir": 360, "speed": 110, "temp": -45, "lightVariable": false },
+      "why": "upper bound of the >=100kt rule"
+    },
+    {
+      "raw": "511055",
+      "expect": { "dir": 10, "speed": 110, "temp": -55, "lightVariable": false },
+      "why": "lower bound of the >=100kt rule"
+    },
+    {
+      "raw": "3612+05",
+      "expect": { "dir": 360, "speed": 12, "temp": 5, "lightVariable": false },
+      "why": "dd=36 is north and must NOT trigger the >=100kt rule"
+    },
+    {
+      "raw": "295037",
+      "expect": { "dir": 290, "speed": 50, "temp": -37, "lightVariable": false },
+      "why": "above 24000ft the temp is unsigned and always negative"
+    },
+    {
+      "raw": "3316+20",
+      "expect": { "dir": 330, "speed": 16, "temp": 20, "lightVariable": false },
+      "why": "at/below 24000ft the temp carries an explicit + sign"
+    },
+    {
+      "raw": "2919-07",
+      "expect": { "dir": 290, "speed": 19, "temp": -7, "lightVariable": false },
+      "why": "explicit negative sign at a low level"
+    },
+    {
+      "raw": "9900",
+      "expect": { "dir": null, "speed": null, "temp": null, "lightVariable": true },
+      "why": "9900 = light and variable; 3000ft column carries no temp"
+    },
+    {
+      "raw": "990032",
+      "expect": { "dir": null, "speed": null, "temp": -32, "lightVariable": true },
+      "why": "light and variable still carries a temp at high levels"
+    },
+    {
+      "raw": "361433",
+      "expect": { "dir": 360, "speed": 14, "temp": -33, "lightVariable": false },
+      "why": "live KDAL FL300 group observed 2026-08-20"
+    },
+    {
+      "raw": "245632",
+      "expect": { "dir": 240, "speed": 56, "temp": -32, "lightVariable": false },
+      "why": "live KJFK FL300 group observed 2026-08-20"
+    },
+    {
+      "raw": "2622+07",
+      "expect": { "dir": 260, "speed": 22, "temp": 7, "lightVariable": false },
+      "why": "live KMSP 9000ft group observed 2026-08-20"
+    },
+    {
+      "raw": "501255",
+      "expect": null,
+      "why": "dd=50 is not a valid code and yields a 500 degree bearing - must be rejected, never printed"
+    },
+    {
+      "raw": "9912",
+      "expect": null,
+      "why": "dd=99 with a non-zero speed is not the light-and-variable code and yields 990 degrees"
+    },
+    {
+      "raw": "",
+      "expect": null,
+      "why": "blank column - station does not report this level"
+    },
+    {
+      "raw": "    ",
+      "expect": null,
+      "why": "whitespace-only column"
+    },
+    {
+      "raw": "ABCD",
+      "expect": null,
+      "why": "non-numeric garbage must not decode"
+    },
+    {
+      "raw": "12",
+      "expect": null,
+      "why": "too short to be a group"
+    }
+  ]
+}

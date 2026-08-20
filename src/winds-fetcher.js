@@ -60,9 +60,11 @@ export function parseGroup(text) {
   let speed = null;
 
   if (!lightVariable) {
+    // parseInt('0Z') is 0, which would let bulletin prose decode as a wind.
+    // Require exactly two digits, matching the PHP port's ctype_digit check.
+    if (!/^\d{2}$/.test(dd) || !/^\d{2}$/.test(ff)) return null;
     let d = parseInt(dd, 10);
     let s = parseInt(ff, 10);
-    if (Number.isNaN(d) || Number.isNaN(s)) return null;
 
     // Direction 51-86 flags wind >= 100 kt.
     if (d >= 51 && d <= 86) {
@@ -78,11 +80,14 @@ export function parseGroup(text) {
   }
 
   // Temp is signed at/below 24,000 ft and unsigned (always negative) above it.
+  // An empty tail is legitimate (the 3,000 ft column carries no temp); anything
+  // else non-numeric means the group is malformed and is not trusted at all.
   let temp = null;
   const tempPart = g.slice(4);
   if (tempPart.length) {
+    if (!/^[+-]?\d+$/.test(tempPart)) return null;
     const n = parseInt(tempPart.replace('+', ''), 10);
-    if (!Number.isNaN(n)) temp = tempPart.startsWith('+') ? n : -Math.abs(n);
+    temp = tempPart.startsWith('+') ? n : -Math.abs(n);
   }
 
   return { dir, speed, temp, lightVariable, raw: g };
@@ -100,18 +105,25 @@ async function fetchRegion(region) {
 
   const stations = {};
   for (const line of lines.slice(headerIdx + 1)) {
-    const id = line.slice(0, 3).trim();
-    if (!/^[A-Z0-9]{3}$/.test(id)) continue;
-
-    const levels = {};
-    for (const col of LEVEL_COLUMNS) {
-      const parsed = parseGroup(line.slice(col.start, col.end));
-      if (parsed) levels[col.ft] = parsed;
-    }
-    if (Object.keys(levels).length) stations[id] = { region, levels };
+    const parsed = parseStationLine(line);
+    if (parsed) stations[parsed.id] = { region, levels: parsed.levels };
   }
 
   return { stations, validity };
+}
+
+// Exported for conformance tests: this is where a whitespace-split would go
+// wrong on stations that omit low levels.
+export function parseStationLine(line) {
+  const id = line.slice(0, 3).trim();
+  if (!/^[A-Z0-9]{3}$/.test(id)) return null;
+
+  const levels = {};
+  for (const col of LEVEL_COLUMNS) {
+    const parsed = parseGroup(line.slice(col.start, col.end));
+    if (parsed) levels[col.ft] = parsed;
+  }
+  return Object.keys(levels).length ? { id, levels } : null;
 }
 
 async function getTable() {
@@ -138,7 +150,7 @@ async function getTable() {
   return data;
 }
 
-function nearestLevel(altitudeFt) {
+export function nearestLevel(altitudeFt) {
   const alt = Number(altitudeFt);
   if (!Number.isFinite(alt) || alt <= 0) return 30000;
   return LEVEL_COLUMNS

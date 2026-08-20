@@ -351,6 +351,11 @@
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+    // Must match the server-side briefing text, which rounds half away from
+    // zero (PHP's convention). Math.round(-2.5) is -2 and would print a
+    // different sub-zero temp here than in the briefing directly below.
+    const roundTemp = (n) => Math.sign(n) * Math.round(Math.abs(n));
+
     function wxItem(label, value) {
       if (value == null || value === '') return '';
       return `<div class="wx-item"><span class="wx-label">${esc(label)}</span>` +
@@ -388,7 +393,7 @@
           ${wxItem('Visibility', m.visib != null ? m.visib + ' SM' : null)}
           ${wxItem('Ceiling', ceil ? `${ceil.cover} ${ceil.base.toLocaleString()} ft` : 'None reported')}
           ${wxItem('Present wx', m.wxString)}
-          ${wxItem('Temp / Dew', m.temp != null ? `${Math.round(m.temp)}°C / ${Math.round(m.dewp)}°C` : null)}
+          ${wxItem('Temp / Dew', m.temp != null ? `${roundTemp(m.temp)}°C / ${roundTemp(m.dewp)}°C` : null)}
           ${wxItem('Altimeter', m.altim != null ? (m.altim / 33.8639).toFixed(2) + ' inHg' : null)}
         </div>
         <div class="raw">${esc(m.raw)}</div>

@@ -33,26 +33,56 @@ npm start
 
 Visit `http://localhost:3003` to test the briefing interface.
 
-## Office Server Deployment
+## Status — what is real
 
-**Production:** FreeBSD 15.1 (77.111.115.58) with Docker or PM2  
-**Reverse Proxy:** Nginx (already installed)  
-**SSL:** Certbot (ready, DNS-gated)
+| Area | State |
+|------|-------|
+| Surface weather (METAR/TAF) | **Live** — NOAA `aviationweather.gov/api/data` |
+| Winds & temps aloft | **Live** — NOAA FB product, standard levels to FL390 |
+| NOTAMs | **Placeholder.** Hardcoded strings, badged in the UI. Not FAA data |
+| Special Use Airspace | **Placeholder.** Nothing is queried; the UI says "not checked" |
+| Geolocation | **Collected but unused.** No output depends on the reported position |
+| Briefing synthesis | Deterministic formatter. Claude is wired but needs `ANTHROPIC_API_KEY` |
 
-See [OFFICE-SERVER-DEPLOYMENT.md](OFFICE-SERVER-DEPLOYMENT.md) for setup instructions.
+The service issues **no go/no-go verdict** and is not an official FAA briefing.
 
-**Quick deploy (Option A — Docker):**
+## Tests
+
 ```bash
-docker-compose up -d
-# Server runs on localhost:3003, Nginx proxy on :80/:443
+npm test
 ```
 
-**Quick deploy (Option B — PM2):**
+The FB decoder and METAR formatter exist twice — once in `src/*.js`, once in
+`deploy/kbmsolvedit/api.php` — and nothing in either language prevents them
+drifting. `tests/conformance.mjs` runs shared fixtures through **both** and
+fails on any disagreement. Requires `php` on PATH; if it is missing the PHP half
+reports SKIPPED and the run exits non-zero rather than passing silently.
+
+## Deployment
+
+**Live demo:** <https://kbmsolvedit.net/demo/flight-service/>
+
+That host is npulse PHP shared hosting with **no Node runtime**, so it runs the
+PHP port in `deploy/kbmsolvedit/`, not this Express app. A pure client-side build
+is not possible either — `aviationweather.gov` sends no CORS header, so NOAA must
+be called server-side.
+
 ```bash
-npm install --production
-pm2 start ecosystem.config.js
-pm2 save && pm2 startup
+npm run build:php   # regenerate deploy/kbmsolvedit/index.php from web/index.html
+npm test            # both implementations must agree before uploading
 ```
+
+Then upload `index.php` and `api.php` to `/demo/flight-service/` over FTP, and
+**verify byte sizes on read-back** — that host can truncate an upload and still
+return `226`. Never hand-edit `deploy/kbmsolvedit/index.php`; it is generated.
+
+### Other deployment paths (written, never used)
+
+`Dockerfile`, `docker-compose.yml`, `ecosystem.config.js`,
+`nginx-flight-service.conf`, `deploy-office-server.sh` and the
+`OFFICE-SERVER-*` / `VNC-*` guides target a self-hosted Node deployment on
+FreeBSD (77.111.115.58). None of it has been exercised. Treat it as a proposal,
+not a runbook.
 
 ## Architecture
 
@@ -82,13 +112,17 @@ pm2 save && pm2 startup
 ## Scope: MVP vs. Future
 
 ### MVP (v0.1 — current)
-- [x] Geolocation (browser GPS)
-- [x] Weather briefing (METAR/TAF fetch)
-- [x] NOTAM placeholder
-- [x] SUA awareness stub
-- [x] Claude briefing synthesis
+- [x] Weather briefing (METAR/TAF) — live NOAA
+- [x] Winds & temps aloft (FB product) — live NOAA
+- [x] Aircraft type and filed altitude carried into the briefing
+- [~] Geolocation — captured in the browser, but **no output depends on it yet**
+- [~] Claude synthesis — implemented, inactive without `ANTHROPIC_API_KEY`
+- [~] NOTAMs — placeholder strings only, badged in the UI
+- [~] SUA — not queried; reported as "not checked"
 - [ ] Voice output (browser SpeechSynthesis fallback in place)
 - [ ] Flight plan filing (NOT included — liability too high without FAA integration)
+
+`[~]` means present in the codebase but not yet doing the job its name implies.
 
 ### Phase 2
 - [ ] Real-time FAA NOTAM API integration

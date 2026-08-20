@@ -104,15 +104,34 @@ function fb_parse_group(string $text): ?array {
     }
 
     // Temp is signed at/below 24,000 ft, unsigned and always negative above.
+    // An empty tail is legitimate (the 3,000 ft column carries no temp); anything
+    // else non-numeric means the group is malformed and is not trusted at all.
     $temp = null;
     $tp = substr($g, 4);
     if ($tp !== '' && $tp !== false) {
+        if (!preg_match('/^[+-]?\d+$/', $tp)) return null;
         $n = (int)str_replace('+', '', $tp);
         $temp = (strpos($tp, '+') === 0) ? $n : -abs($n);
     }
 
     return ['dir' => $dir, 'speed' => $speed, 'temp' => $temp,
             'lightVariable' => $lightVariable, 'raw' => $g];
+}
+
+/**
+ * Split one station row by fixed column offsets. This is where a
+ * whitespace-split would go wrong on stations that omit low levels.
+ */
+function fb_parse_station_line(string $line): ?array {
+    $id = trim(substr($line, 0, 3));
+    if (!preg_match('/^[A-Z0-9]{3}$/', $id)) return null;
+
+    $levels = [];
+    foreach (LEVEL_COLUMNS as $ft => [$start, $len]) {
+        $g = fb_parse_group(substr($line, $start, $len));
+        if ($g) $levels[$ft] = $g;
+    }
+    return $levels ? ['id' => $id, 'levels' => $levels] : null;
 }
 
 function fb_table(): array {
@@ -137,20 +156,12 @@ function fb_table(): array {
     $validity = null;
     foreach ($bodies as $body) {
         if (!$body) continue;
-        $lines = explode("\n", $body);
-        foreach ($lines as $line) {
+        foreach (explode("\n", $body) as $line) {
             if ($validity === null && strpos($line, 'VALID') === 0) {
                 $validity = trim($line);
             }
-            $id = trim(substr($line, 0, 3));
-            if (!preg_match('/^[A-Z0-9]{3}$/', $id)) continue;
-
-            $levels = [];
-            foreach (LEVEL_COLUMNS as $ft => [$start, $len]) {
-                $g = fb_parse_group(substr($line, $start, $len));
-                if ($g) $levels[$ft] = $g;
-            }
-            if ($levels) $stations[$id] = $levels;
+            $parsed = fb_parse_station_line($line);
+            if ($parsed) $stations[$parsed['id']] = $parsed['levels'];
         }
     }
 
@@ -278,6 +289,10 @@ function describe_winds(string $label, array $w): string {
 }
 
 // ---------------------------------------------------------------- request ---
+
+// Under CLI this file is being included by the conformance tests, which need
+// the decode functions above but must not trigger a request.
+if (PHP_SAPI === 'cli') return;
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     fail(405, 'POST required');

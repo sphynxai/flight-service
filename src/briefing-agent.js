@@ -98,8 +98,16 @@ function describeWinds(label, w) {
          `\n  station ${station}, raw ${w.raw}`;
 }
 
+// Math.round(-2.5) is -2 (half toward +Infinity) but PHP round(-2.5) is -3
+// (half away from zero). Sub-zero cruise temps rendered differently on the two
+// hosts until this was pinned; PHP's convention is the one both now follow.
+function roundHalfAwayFromZero(n) {
+  return Math.sign(n) * Math.round(Math.abs(n));
+}
+
 // Formats only NOAA-decoded fields — no local METAR parsing.
-function describeStation(label, icao, m) {
+// Exported for the conformance suite: the PHP port must render this identically.
+export function describeStation(label, icao, m) {
   if (!m) return `${label} (${icao}): weather unavailable`;
 
   const bits = [];
@@ -120,7 +128,9 @@ function describeStation(label, icao, m) {
     ? `Ceiling ${ceiling.cover} ${ceiling.base.toLocaleString()}ft`
     : 'No ceiling reported');
 
-  if (m.temp != null) bits.push(`${Math.round(m.temp)}°C/${Math.round(m.dewp)}°C`);
+  if (m.temp != null) {
+    bits.push(`${roundHalfAwayFromZero(m.temp)}°C/${roundHalfAwayFromZero(m.dewp)}°C`);
+  }
   if (m.altim != null) bits.push(`Altimeter ${(m.altim / 33.8639).toFixed(2)}inHg`);
 
   return `${label} (${icao}): ${bits.join(' · ')}\n  ${m.raw}`;

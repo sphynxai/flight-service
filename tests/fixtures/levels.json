@@ -1,0 +1,14 @@
+{
+  "_comment": "Filed altitude -> which standard FB level should be used. Ties and out-of-range values must resolve identically in both implementations.",
+  "cases": [
+    { "altitude": 30000, "expect": 30000, "why": "exact standard level" },
+    { "altitude": 31000, "expect": 30000, "why": "off-level: 1000 below FL340 boundary, nearer FL300" },
+    { "altitude": 8000,  "expect": 9000,  "why": "nearer 9000 than 6000" },
+    { "altitude": 7000,  "expect": 6000,  "why": "nearer 6000 than 9000" },
+    { "altitude": 7500,  "expect": 6000,  "why": "exact midpoint - both must break the tie the same way" },
+    { "altitude": 45000, "expect": 39000, "why": "above the low-level product: clamp to the highest available" },
+    { "altitude": 1000,  "expect": 3000,  "why": "below the lowest level: clamp to the lowest available" },
+    { "altitude": 0,     "expect": 30000, "why": "unset altitude falls back to FL300" },
+    { "altitude": -500,  "expect": 30000, "why": "nonsense altitude falls back rather than computing a negative nearest" }
+  ]
+}
