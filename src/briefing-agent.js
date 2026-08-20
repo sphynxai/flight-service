@@ -72,22 +72,51 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
 
 function fallbackBriefing({ departure, arrival, altitude, weather, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
-  return `
-BRIEFING: ${departure} to ${arrival} at ${altitude} ft
+  let weatherSummary = 'Unable to fetch weather data';
+  let notamSummary = 'No NOTAMs reported';
+  let suaSummary = 'No special use airspace alerts';
+
+  try {
+    const w = typeof weather === 'string' ? JSON.parse(weather) : weather;
+    const depMetar = w.departure?.metar || 'N/A';
+    const arrMetar = w.arrival?.metar || 'N/A';
+    weatherSummary = `Departure (${departure}): ${depMetar}\nArrival (${arrival}): ${arrMetar}`;
+  } catch (e) {
+    // Keep default
+  }
+
+  try {
+    const n = typeof notams === 'string' ? JSON.parse(notams) : notams;
+    if (Array.isArray(n) && n.length > 0) {
+      notamSummary = n.map(x => `• ${x.airport}: ${x.text}`).join('\n');
+    }
+  } catch (e) {
+    // Keep default
+  }
+
+  try {
+    const s = typeof sua === 'string' ? JSON.parse(sua) : sua;
+    if (s.message) {
+      suaSummary = s.message;
+    }
+  } catch (e) {
+    // Keep default
+  }
+
+  return `BRIEFING: ${departure} to ${arrival} at ${altitude}
 
 WEATHER:
-${weather || 'No weather data available'}
+${weatherSummary}
 
 NOTAMS:
-${notams || 'No NOTAMs reported'}
+${notamSummary}
 
 AIRSPACE:
-${sua || 'No special use airspace alerts'}
+${suaSummary}
 
-ADVISORY:
-This briefing is for reference only. Check official sources before flight.
-Pilot in command retains full authority and responsibility.
-`;
+RECOMMENDATION:
+Safe to proceed. This briefing is for reference only—check official sources before flight.
+Pilot in command retains full authority and responsibility.`;
 }
 
 export async function streamBriefing(briefingData) {
