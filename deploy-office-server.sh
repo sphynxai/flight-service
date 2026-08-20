@@ -7,7 +7,7 @@ set -e
 
 DEPLOY_METHOD=${1:-docker}
 REPO_DIR="/srv/www/flight-service"
-API_KEY="${ANTHROPIC_API_KEY}"
+API_KEY="${ANTHROPIC_API_KEY:-}"
 
 echo "========================================="
 echo "Flight Service Deployment"

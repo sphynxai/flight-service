@@ -8,7 +8,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3003,
-        ANTHROPIC_API_KEY: '${ANTHROPIC_API_KEY}'
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY
       },
       env_development: {
         NODE_ENV: 'development',
