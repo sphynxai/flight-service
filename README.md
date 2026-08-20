@@ -22,7 +22,7 @@ Nationwide preflight briefing service using AlbertAI voice, replacing the broken
 - **AlbertAI voice** (reused from Magellan; Twilio SIP + DeepL + ElevenLabs)
 - **Geolocation** (browser GPS, optional aircraft location lookup)
 
-## Quick Start
+## Quick Start (Local Dev)
 
 ```bash
 npm install
@@ -32,6 +32,27 @@ npm start
 ```
 
 Visit `http://localhost:3003` to test the briefing interface.
+
+## Office Server Deployment
+
+**Production:** FreeBSD 15.1 (77.111.115.58) with Docker or PM2  
+**Reverse Proxy:** Nginx (already installed)  
+**SSL:** Certbot (ready, DNS-gated)
+
+See [OFFICE-SERVER-DEPLOYMENT.md](OFFICE-SERVER-DEPLOYMENT.md) for setup instructions.
+
+**Quick deploy (Option A — Docker):**
+```bash
+docker-compose up -d
+# Server runs on localhost:3003, Nginx proxy on :80/:443
+```
+
+**Quick deploy (Option B — PM2):**
+```bash
+npm install --production
+pm2 start ecosystem.config.js
+pm2 save && pm2 startup
+```
 
 ## Architecture
 
