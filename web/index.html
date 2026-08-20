@@ -131,18 +131,18 @@
     <form id="briefingForm">
       <div class="form-group">
         <label for="departure">Departure Airport (ICAO)</label>
-        <input type="text" id="departure" name="departure" placeholder="KJFK" required>
+        <input type="text" id="departure" name="departure" placeholder="KJFK" value="KJFK" required>
       </div>
 
       <div class="form-group">
         <label for="arrival">Arrival Airport (ICAO)</label>
-        <input type="text" id="arrival" name="arrival" placeholder="KLAX" required>
+        <input type="text" id="arrival" name="arrival" placeholder="KLAX" value="KLAX" required>
       </div>
 
       <div class="two-col">
         <div class="form-group">
           <label for="altitude">Cruising Altitude (feet)</label>
-          <input type="text" id="altitude" name="altitude" placeholder="8000">
+          <input type="text" id="altitude" name="altitude" placeholder="8000" value="8000">
         </div>
         <div class="form-group">
           <label for="aircraft">Aircraft Type (optional)</label>
@@ -182,15 +182,15 @@
           (pos) => {
             document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
             document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
-            statusEl.textContent = `📍 ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+            statusEl.textContent = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
           },
           (err) => {
-            statusEl.textContent = '📍 Geolocation denied (manual entry ok)';
+            statusEl.textContent = 'Geolocation denied (manual entry ok)';
             console.warn('Geolocation denied:', err);
           }
         );
       } else {
-        statusEl.textContent = '📍 Browser does not support geolocation';
+        statusEl.textContent = 'Browser does not support geolocation';
       }
     }
 
