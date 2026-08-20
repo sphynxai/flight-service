@@ -3,7 +3,9 @@
 
 import axios from 'axios';
 
-const NOAA_METAR_BASE = 'https://www.aviationweather.gov/adds/dataserver_current/httpparam';
+// The legacy ADDS DataServer (/adds/dataserver_current/httpparam) was retired and
+// now 308-redirects without serving data. This is the current NOAA endpoint.
+const NOAA_API_BASE = 'https://aviationweather.gov/api/data';
 const CACHE_TTL = 600000; // 10 minutes
 
 const cache = new Map();
@@ -27,27 +29,22 @@ export async function fetchMETAR(airport) {
 
   try {
     const params = new URLSearchParams({
-      dataSource: 'metars',
-      requestType: 'retrieve',
-      format: 'csv',
-      stationString: airport.toUpperCase(),
-      hoursBeforeNow: '1',
-      mostRecentForEachStation: 'constraint'
+      ids: airport.toUpperCase(),
+      format: 'json'
     });
 
-    const url = `${NOAA_METAR_BASE}?${params}`;
-    const response = await axios.get(url, { timeout: 5000 });
+    const url = `${NOAA_API_BASE}/metar?${params}`;
+    const response = await axios.get(url, { timeout: 10000 });
 
-    if (!response.data || response.data.includes('No results')) {
-      return null;
-    }
+    const raw = response.data?.[0]?.rawOb;
+    if (!raw) return null;
 
     cache.set(cacheKey, {
-      data: response.data,
+      data: raw,
       timestamp: Date.now()
     });
 
-    return response.data;
+    return raw;
   } catch (err) {
     console.error(`METAR fetch failed for ${airport}:`, err.message);
     return null;
@@ -63,27 +60,22 @@ export async function fetchTAF(airport) {
 
   try {
     const params = new URLSearchParams({
-      dataSource: 'tafs',
-      requestType: 'retrieve',
-      format: 'csv',
-      stationString: airport.toUpperCase(),
-      hoursBeforeNow: '0',
-      mostRecentForEachStation: 'constraint'
+      ids: airport.toUpperCase(),
+      format: 'json'
     });
 
-    const url = `${NOAA_METAR_BASE}?${params}`;
-    const response = await axios.get(url, { timeout: 5000 });
+    const url = `${NOAA_API_BASE}/taf?${params}`;
+    const response = await axios.get(url, { timeout: 10000 });
 
-    if (!response.data || response.data.includes('No results')) {
-      return null;
-    }
+    const raw = response.data?.[0]?.rawTAF;
+    if (!raw) return null;
 
     cache.set(cacheKey, {
-      data: response.data,
+      data: raw,
       timestamp: Date.now()
     });
 
-    return response.data;
+    return raw;
   } catch (err) {
     console.error(`TAF fetch failed for ${airport}:`, err.message);
     return null;
