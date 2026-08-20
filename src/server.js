@@ -10,6 +10,7 @@ import { buildVoiceBriefing } from './voice-briefing.js';
 import { buildFlightPlan, prefillFromBriefing } from './flight-plan.js';
 import { resolveFlightTimes, forecastAt, summarisePeriod, scanWindow } from './flight-time.js';
 import { fetchTfrs, stateFromStationName } from './tfr-fetcher.js';
+import { fetchAirports } from './airport-fetcher.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -98,6 +99,9 @@ app.post('/api/briefing', async (req, res) => {
 
     const tfrs = await fetchTfrs(endpoints, [...new Set(routeStates)]);
 
+    // Facility data: ATIS/AWOS frequency and runways for both ends.
+    const airports = await fetchAirports([dep, arr]);
+
     // Synthesize briefing via AlbertAI
     const briefing = await generateBriefing({
       departure: dep,
@@ -173,6 +177,7 @@ app.post('/api/briefing', async (req, res) => {
       winds,
       hazards,
       tfrs,
+      airports,
       notams,
       sua,
       aircraft: aircraft ? aircraft.toUpperCase() : null,

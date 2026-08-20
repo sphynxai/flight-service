@@ -650,6 +650,17 @@
           <span class="cat cat-${esc(cat)}">${esc(cat)}</span>
           <span class="station-name">${esc(m.station || '')}</span>
         </div>
+        ${(() => {
+          const a = (window.__airports || {})[String(icao).toUpperCase()];
+          if (!a) return '';
+          const bits = [];
+          if (a.freqs?.broadcast) bits.push(`${esc(a.freqs.broadcast.type)} <b>${esc(a.freqs.broadcast.mhz)}</b>`);
+          if (a.freqs?.tower) bits.push(`${a.towered ? 'Tower' : 'CTAF'} <b>${esc(a.freqs.tower.mhz)}</b>`);
+          const r = a.longestRunway;
+          if (r?.id) bits.push(`Rwy ${esc(r.id)} ${r.lengthFt ? Number(r.lengthFt).toLocaleString() + ' ft' : ''} ${esc(r.surface || '')}`.trim());
+          if (!bits.length) return '';
+          return `<div style="font-size:12px;color:#5a6472;margin-bottom:8px;">${bits.join(' · ')}</div>`;
+        })()}
         <div class="wx-grid">
           ${wxItem('Wind', wind)}
           ${wxItem('Visibility', m.visib != null ? m.visib + ' SM' : null)}
@@ -687,11 +698,24 @@
           ${wxItem('Temp', w.temp != null ? `${w.temp}°C` : null)}
           ${wxItem('Level', levelText)}
         </div>
+        ${(w.bracket || []).length > 1 ? `<div class="corridor" style="margin-bottom:8px;">
+          ${w.bracket.map(b => {
+            const wind = b.lightVariable ? 'LGT/VAR' : `${String(b.dir).padStart(3, '0')}° / ${b.speed} kt`;
+            const t = b.temp != null ? ` · ${b.temp}°C` : '';
+            return `<div class="corridor-row" style="grid-template-columns:74px 1fr;">` +
+              `<span style="${b.filed ? 'font-weight:700;color:#1e3c72;' : 'color:#8a93a0;'}">` +
+              `${Number(b.level).toLocaleString()}ft</span>` +
+              `<span style="${b.filed ? 'font-weight:600;' : 'color:#5a6472;'}">${esc(wind)}${esc(t)}` +
+              `${b.filed ? ' — filed' : ''}</span></div>`;
+          }).join('')}
+        </div>` : ''}
         <div class="raw">${esc(w.raw)}${w.validity ? ' · ' + esc(w.validity) : ''}</div>
       </div>`;
     }
 
     function renderBriefing(data) {
+      // Facility data is keyed by ICAO and read by stationCard.
+      window.__airports = data.airports || {};
       const w = data.weather || {};
       const winds = data.winds || {};
       const notams = data.notams || [];

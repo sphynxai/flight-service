@@ -200,6 +200,23 @@ function fb_table(): array {
     return $data;
 }
 
+/** Published FB levels within +/-band of the filed altitude. FB levels are not
+ *  evenly spaced, so rather than interpolate (which would invent data) this
+ *  returns the real published levels inside the band, always incl. the nearest. */
+function bracket_levels($altitude, float $bandFt = 4000): array {
+    $nearest = nearest_level($altitude);
+    $alt = (float)$altitude;
+    if ($alt <= 0) return [$nearest];
+
+    $within = [];
+    foreach (array_keys(LEVEL_COLUMNS) as $ft) {
+        if (abs($ft - $alt) <= $bandFt) $within[] = $ft;
+    }
+    if (!in_array($nearest, $within, true)) $within[] = $nearest;
+    sort($within);
+    return $within;
+}
+
 function nearest_level($altitude): int {
     $alt = (int)$altitude;
     if ($alt <= 0) return 30000;
@@ -225,6 +242,20 @@ function winds_for(string $icao, $altitude, array $table): array {
     }
 
     $w = $table['stations'][$fbId][$level];
+
+    // Every published level bracketing the filed altitude, so a pilot can see
+    // whether climbing or descending buys a better wind.
+    $bracket = [];
+    foreach (bracket_levels($altitude) as $ft) {
+        $b = $table['stations'][$fbId][$ft] ?? null;
+        if (!$b) continue;
+        $bracket[] = [
+            'level' => $ft, 'filed' => $ft === $level,
+            'dir' => $b['dir'], 'speed' => $b['speed'], 'temp' => $b['temp'],
+            'lightVariable' => $b['lightVariable'], 'raw' => $b['raw'],
+        ];
+    }
+
     return [
         'airport' => $icao,
         'station' => $fbId,
@@ -237,6 +268,7 @@ function winds_for(string $icao, $altitude, array $table): array {
         'temp' => $w['temp'],
         'lightVariable' => $w['lightVariable'],
         'raw' => $w['raw'],
+        'bracket' => $bracket,
         'validity' => $table['validity'],
     ];
 }
@@ -1015,6 +1047,75 @@ function build_voice_briefing(array $d): string {
     return implode(' ', $lines);
 }
 
+// ------------------------------------------------------------- airports ---
+// Facility data — the ATIS/AWOS frequency a pilot dials first, and the runways
+// they will reconcile the wind against. Mirror of src/airport-fetcher.js.
+
+/** "LCL/P,120.825;ATIS,126.925" -> grouped, with the broadcast freq pulled out. */
+function ap_parse_freqs(?string $text): array {
+    $all = [];
+    foreach (explode(';', (string)$text) as $entry) {
+        $parts = array_map('trim', explode(',', $entry));
+        if (count($parts) < 2 || $parts[0] === '' || $parts[1] === '') continue;
+        $all[] = ['type' => strtoupper($parts[0]), 'mhz' => $parts[1]];
+    }
+    $broadcast = null; $tower = null;
+    foreach ($all as $f) {
+        if (!$broadcast && preg_match('#^D?-?ATIS$#', $f['type'])) $broadcast = $f;
+        if (!$tower && strpos($f['type'], 'LCL') === 0) $tower = $f;
+    }
+    if (!$broadcast) {
+        foreach ($all as $f) {
+            if (preg_match('/AWOS|ASOS|AWSS/', $f['type'])) { $broadcast = $f; break; }
+        }
+    }
+    return ['all' => $all, 'broadcast' => $broadcast, 'tower' => $tower];
+}
+
+function fetch_airports(array $icaos): array {
+    $ids = array_values(array_unique(array_map('strtoupper', array_filter($icaos))));
+    if (!$ids) return [];
+
+    $res = fetch_all(['a' => NOAA_API . '/airport?ids=' . urlencode(implode(',', $ids)) . '&format=json']);
+    if ($res['a'] === null) return [];   // empty means not retrieved
+    $rows = json_decode($res['a'], true);
+    if (!is_array($rows)) return [];
+
+    $surface = ['A'=>'asphalt','C'=>'concrete','G'=>'grass','D'=>'dirt','T'=>'turf','W'=>'water'];
+    $out = [];
+    foreach ($rows as $a) {
+        $id = strtoupper((string)($a['icaoId'] ?? ''));
+        if (!$id) continue;
+
+        $runways = []; $longest = null;
+        foreach ($a['runways'] ?? [] as $r) {
+            $len = null; $wid = null;
+            if (preg_match('/^(\d+)x(\d+)$/', trim((string)($r['dimension'] ?? '')), $m)) {
+                $len = (int)$m[1]; $wid = (int)$m[2];
+            }
+            $rw = [
+                'id' => $r['id'] ?? null, 'lengthFt' => $len, 'widthFt' => $wid,
+                'surface' => $surface[strtoupper((string)($r['surface'] ?? ''))] ?? ($r['surface'] ?? null),
+                'alignment' => $r['alignment'] ?? null,
+            ];
+            $runways[] = $rw;
+            if ($len !== null && ($longest === null || $len > $longest['lengthFt'])) $longest = $rw;
+        }
+
+        $out[$id] = [
+            'icao' => $id,
+            'name' => isset($a['name']) ? trim((string)$a['name']) : null,
+            'elevM' => $a['elev'] ?? null,
+            'magdec' => $a['magdec'] ?? null,
+            'towered' => strtoupper((string)($a['tower'] ?? '')) === 'T',
+            'freqs' => ap_parse_freqs($a['freqs'] ?? null),
+            'runways' => $runways,
+            'longestRunway' => $longest,
+        ];
+    }
+    return $out;
+}
+
 // ---------------------------------------------------------------- TFRs ----
 // Mirror of src/tfr-fetcher.js. The TFR list needs NO authentication (unlike
 // the FAA NOTAM API, which is regulation-gated and 401s). Two stages: the list
@@ -1644,6 +1745,9 @@ $routeStates = array_filter(array_merge(
 ));
 $tfrs = fetch_tfrs($endpoints, array_values(array_unique($routeStates)));
 
+// Facility data: ATIS/AWOS frequency and runways for both ends.
+$airports = fetch_airports([$dep, $arr]);
+
 $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "\n\nWEATHER:\n"
     . describe_station('Departure', $dep, $weather['departure']['metar'], $weather['departure']['taf']) . "\n\n"
@@ -1706,6 +1810,7 @@ echo json_encode([
     'winds'     => $winds,
     'hazards'   => $hazards,
     'tfrs'      => $tfrs,
+    'airports'  => $airports,
     'routeWeather' => $routeWeather,
     'notams'    => $notams,
     'sua'       => $sua,

@@ -154,6 +154,27 @@ async function getTable() {
   return data;
 }
 
+/**
+ * Published FB levels within +/-bandFt of the filed altitude.
+ *
+ * Garmin shows three columns bracketing the filed level. FB levels are not
+ * evenly spaced (3/6/9/12/18/24/30/34/39 thousand), so rather than interpolate
+ * — which would invent data — this returns the real published levels that fall
+ * inside the band, always including the nearest.
+ */
+export function bracketLevels(altitudeFt, bandFt = 4000) {
+  const nearest = nearestLevel(altitudeFt);
+  const alt = Number(altitudeFt);
+  if (!Number.isFinite(alt) || alt <= 0) return [nearest];
+
+  const within = LEVEL_COLUMNS
+    .map(c => c.ft)
+    .filter(ft => Math.abs(ft - alt) <= bandFt);
+
+  if (!within.includes(nearest)) within.push(nearest);
+  return within.sort((a, b) => a - b);
+}
+
 export function nearestLevel(altitudeFt) {
   const alt = Number(altitudeFt);
   if (!Number.isFinite(alt) || alt <= 0) return 30000;
@@ -188,6 +209,24 @@ export async function fetchWindsAloft(icao, altitudeFt) {
       };
     }
 
+    // Every published level bracketing the filed altitude, so a pilot can see
+    // whether climbing or descending buys a better wind.
+    const bracket = bracketLevels(altitudeFt)
+      .map(ft => {
+        const w = station.levels[ft];
+        if (!w) return null;
+        return {
+          level: ft,
+          filed: ft === level,
+          dir: w.dir,
+          speed: w.speed,
+          temp: w.temp,
+          lightVariable: w.lightVariable,
+          raw: w.raw
+        };
+      })
+      .filter(Boolean);
+
     return {
       airport: code,
       station: fbId,
@@ -200,6 +239,7 @@ export async function fetchWindsAloft(icao, altitudeFt) {
       temp: wind.temp,
       lightVariable: wind.lightVariable,
       raw: wind.raw,
+      bracket,
       validity
     };
   } catch (err) {
