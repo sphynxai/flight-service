@@ -249,22 +249,22 @@
     <form id="briefingForm">
       <div class="form-group">
         <label for="departure">Departure Airport (ICAO)</label>
-        <input type="text" id="departure" name="departure" placeholder="KJFK" value="KJFK" required>
+        <input type="text" id="departure" name="departure" placeholder="KDFW" value="KDFW" required>
       </div>
 
       <div class="form-group">
         <label for="arrival">Arrival Airport (ICAO)</label>
-        <input type="text" id="arrival" name="arrival" placeholder="KLAX" value="KLAX" required>
+        <input type="text" id="arrival" name="arrival" placeholder="KMSP" value="KMSP" required>
       </div>
 
       <div class="two-col">
         <div class="form-group">
           <label for="altitude">Cruising Altitude (feet)</label>
-          <input type="text" id="altitude" name="altitude" placeholder="8000" value="8000">
+          <input type="text" id="altitude" name="altitude" placeholder="30000" value="30000">
         </div>
         <div class="form-group">
           <label for="aircraft">Aircraft Type (optional)</label>
-          <input type="text" id="aircraft" name="aircraft" placeholder="C172">
+          <input type="text" id="aircraft" name="aircraft" placeholder="B744" value="B744">
         </div>
       </div>
 
