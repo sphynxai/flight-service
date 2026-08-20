@@ -495,6 +495,17 @@
             `<span class="notam-airport">Center Weather Advisory</span> — ` +
             `${esc(c.name || c.cwsu || '')} ${esc(c.hazard || '')}</div>`);
         }
+        const pr = hz.pireps || [];
+        for (const p of pr.slice(0, 6)) {
+          const fl = p.flightLevel != null ? ` ${p.flightLevel.toLocaleString()}ft` : '';
+          items.push(`<div class="notam-item" style="border-left-color:${p.urgent ? '#c62828' : '#78909c'};">` +
+            `<span class="notam-airport">${p.urgent ? 'URGENT PIREP' : 'PIREP'}${esc(fl)}</span> — ` +
+            `<span style="font-family:ui-monospace,Consolas,monospace;font-size:12px;">${esc(p.raw || '')}</span></div>`);
+        }
+        if (pr.length > 6) {
+          items.push(`<div class="notam-item" style="color:#8a93a0;">` +
+            `…and ${pr.length - 6} more pilot reports on route.</div>`);
+        }
         if (!items.length) {
           items.push(`<div class="notam-item">No SIGMETs, G-AIRMETs or Center Weather ` +
                      `Advisories within ${esc(hz.corridorNm)}nm of the route.</div>`);

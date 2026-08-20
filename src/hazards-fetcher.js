@@ -148,7 +148,13 @@ export async function fetchHazards(points, corridorNm = DEFAULT_CORRIDOR_NM) {
     };
   }
 
-  const [airsig, gair, cwa] = await Promise.all([
+  // PIREPs are queried by bounding box rather than filtered client-side.
+  const bboxParam = [
+    bounds.minLat.toFixed(3), bounds.minLon.toFixed(3),
+    bounds.maxLat.toFixed(3), bounds.maxLon.toFixed(3)
+  ].join(',');
+
+  const [airsig, gair, cwa, pireps] = await Promise.all([
     getJson('/airsigmet?format=json').catch(e => {
       console.error('airsigmet fetch failed:', e.message); return null;
     }),
@@ -157,6 +163,9 @@ export async function fetchHazards(points, corridorNm = DEFAULT_CORRIDOR_NM) {
     }),
     getJson('/cwa?format=json').catch(e => {
       console.error('cwa fetch failed:', e.message); return null;
+    }),
+    getJson(`/pirep?bbox=${bboxParam}&format=json`).catch(e => {
+      console.error('pirep fetch failed:', e.message); return null;
     })
   ]);
 
@@ -165,6 +174,7 @@ export async function fetchHazards(points, corridorNm = DEFAULT_CORRIDOR_NM) {
   if (airsig === null) failed.push('SIGMET');
   if (gair === null) failed.push('G-AIRMET');
   if (cwa === null) failed.push('CWA');
+  if (pireps === null) failed.push('PIREP');
 
   const near = (arr) => (arr || [])
     .filter(x => stillValid(x.validTimeTo ?? x.expireTime))
@@ -195,6 +205,20 @@ export async function fetchHazards(points, corridorNm = DEFAULT_CORRIDOR_NM) {
       validTime: g.validTime || null,
       forecastHour: g.forecastHour ?? null
     })),
+    // Already bbox-scoped by the API. fltLvl is in hundreds of feet — verified
+    // against the raw reports (fltLvl 350 carries "/FL350/"). airepType comes
+    // back null in practice, so urgency is read from the raw UUA token instead.
+    pireps: (pireps || [])
+      .map(p => {
+        const raw = (p.rawOb || '').trim();
+        return {
+          urgent: /\bUUA\b/.test(raw),
+          acType: p.acType || null,
+          flightLevel: p.fltLvl == null ? null : Number(p.fltLvl) * 100,
+          raw: raw || null
+        };
+      })
+      .sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0)),
     cwas: near(cwa).map(c => ({
       cwsu: c.cwsu || null,
       name: c.name || null,

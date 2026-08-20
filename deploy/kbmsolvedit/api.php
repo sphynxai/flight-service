@@ -354,10 +354,17 @@ function fetch_hazards(array $points): array {
                 'gairmets' => [], 'cwas' => []];
     }
 
+    // PIREPs are queried by bounding box rather than filtered client-side.
+    $bbox = implode(',', [
+        number_format($bounds['minLat'], 3, '.', ''), number_format($bounds['minLon'], 3, '.', ''),
+        number_format($bounds['maxLat'], 3, '.', ''), number_format($bounds['maxLon'], 3, '.', ''),
+    ]);
+
     $bodies = fetch_all([
         'airsigmet' => NOAA_API . '/airsigmet?format=json',
         'gairmet'   => NOAA_API . '/gairmet?format=json',
         'cwa'       => NOAA_API . '/cwa?format=json',
+        'pirep'     => NOAA_API . '/pirep?bbox=' . urlencode($bbox) . '&format=json',
     ]);
 
     $decode = function (?string $b): ?array {
@@ -369,12 +376,14 @@ function fetch_hazards(array $points): array {
     $airsig = $decode($bodies['airsigmet']);
     $gair   = $decode($bodies['gairmet']);
     $cwa    = $decode($bodies['cwa']);
+    $pirep  = $decode($bodies['pirep']);
 
     // A failed source must not read as "nothing out there".
     $failed = [];
     if ($airsig === null) $failed[] = 'SIGMET';
     if ($gair === null)   $failed[] = 'G-AIRMET';
     if ($cwa === null)    $failed[] = 'CWA';
+    if ($pirep === null)  $failed[] = 'PIREP';
 
     $now = time();
     $near = function (?array $arr) use ($bounds, $now): array {
@@ -412,6 +421,22 @@ function fetch_hazards(array $points): array {
                    'hazard' => $c['hazard'] ?? null];
     }
 
+    // fltLvl is in hundreds of feet (verified: fltLvl 350 carries "/FL350/").
+    // airepType comes back null in practice, so urgency is read from the raw
+    // UUA token instead.
+    $pireps = [];
+    foreach ($pirep ?? [] as $p) {
+        $raw = trim((string)($p['rawOb'] ?? ''));
+        $pireps[] = [
+            'urgent' => (bool)preg_match('/\bUUA\b/', $raw),
+            'acType' => $p['acType'] ?? null,
+            'flightLevel' => isset($p['fltLvl']) && $p['fltLvl'] !== null
+                ? (int)((float)$p['fltLvl'] * 100) : null,
+            'raw' => $raw ?: null,
+        ];
+    }
+    usort($pireps, fn($a, $b) => ($b['urgent'] ? 1 : 0) <=> ($a['urgent'] ? 1 : 0));
+
     return [
         'available' => true,
         'corridorNm' => CORRIDOR_NM,
@@ -420,6 +445,7 @@ function fetch_hazards(array $points): array {
         'convectiveSigmets' => $conv,
         'sigmets' => $sig,
         'gairmets' => $gairmets,
+        'pireps' => $pireps,
         'cwas' => $cwas,
     ];
 }
@@ -485,6 +511,18 @@ function describe_hazards(?array $h): string {
     foreach ($h['cwas'] as $c) {
         $lines[] = rtrim('• Center Weather Advisory — ' . ($c['name'] ?? $c['cwsu'] ?? '')
                  . ' ' . ($c['hazard'] ?? ''));
+    }
+
+    // Pilot reports last: observations rather than advisories, but an urgent
+    // one (UUA) outranks everything above it.
+    $pireps = $h['pireps'] ?? [];
+    foreach (array_slice($pireps, 0, 6) as $p) {
+        $fl = $p['flightLevel'] !== null ? ' ' . h_ft($p['flightLevel']) : '';
+        $lines[] = rtrim(($p['urgent'] ? '• URGENT PIREP' : '• PIREP') . $fl
+                 . ' — ' . ($p['raw'] ?? $p['acType'] ?? ''));
+    }
+    if (count($pireps) > 6) {
+        $lines[] = '  …and ' . (count($pireps) - 6) . ' more pilot reports on route.';
     }
 
     if (!$lines) {

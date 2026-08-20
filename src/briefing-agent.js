@@ -149,6 +149,17 @@ export function describeHazards(h) {
     lines.push(`• Center Weather Advisory — ${c.name || c.cwsu || ''} ${c.hazard || ''}`.trimEnd());
   }
 
+  // Pilot reports last: they are observations, not advisories, but an urgent
+  // one (UUA) outranks everything above it.
+  const pireps = h.pireps || [];
+  for (const p of pireps.slice(0, 6)) {
+    const fl = p.flightLevel != null ? ` ${ft(p.flightLevel)}` : '';
+    lines.push(`• ${p.urgent ? 'URGENT PIREP' : 'PIREP'}${fl} — ${p.raw || p.acType || ''}`.trimEnd());
+  }
+  if (pireps.length > 6) {
+    lines.push(`  …and ${pireps.length - 6} more pilot reports on route.`);
+  }
+
   if (!lines.length) {
     lines.push(`No SIGMETs, G-AIRMETs or Center Weather Advisories within ${h.corridorNm}nm of the route.`);
   }
