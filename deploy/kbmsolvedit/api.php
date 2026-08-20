@@ -748,7 +748,7 @@ function metar_from(?string $json, string $icao): ?array {
     ];
 }
 
-function describe_station(string $label, string $icao, ?array $m, ?string $taf = null): string {
+function describe_station(string $label, string $icao, ?array $m, $taf = null): string {
     if (!$m) return "$label ($icao): weather unavailable";
 
     $bits = [];
@@ -786,7 +786,7 @@ function describe_station(string $label, string $icao, ?array $m, ?string $taf =
     }
 
     $lines = ["$label ($icao): " . implode(' · ', $bits), '  ' . $m['raw']];
-    if ($taf) $lines[] = '  ' . $taf;
+    if (is_array($taf) ? !empty($taf['raw']) : $taf) $lines[] = '  ' . (is_array($taf) ? $taf['raw'] : $taf);
     return implode("\n", $lines);
 }
 
@@ -1013,6 +1013,120 @@ function build_voice_briefing(array $d): string {
              . 'The pilot in command remains responsible for the go, no go decision.';
 
     return implode(' ', $lines);
+}
+
+// --------------------------------------------------------- flight time ----
+// Mirror of src/flight-time.js. TAF semantics that must not be flattened:
+//   FM lines REPLACE the prevailing forecast.
+//   TEMPO/PROB are conditional OVERLAYS and do NOT replace the base.
+// Reporting a PROB30 thunderstorm as expected weather overstates it; dropping
+// it hides the thing the pilot most needs.
+
+function ft_resolve_times(?string $depHHMM, ?string $eetHHMM, ?int $nowSec = null): ?array {
+    if (!$depHHMM || !preg_match('/^([01]\d|2[0-3])[0-5]\d$/', $depHHMM)) return null;
+    $now = $nowSec ?? time();
+
+    $hh = (int)substr($depHHMM, 0, 2);
+    $mm = (int)substr($depHHMM, 2);
+    $etd = gmmktime($hh, $mm, 0, (int)gmdate('n', $now), (int)gmdate('j', $now), (int)gmdate('Y', $now));
+
+    // Within the last hour still counts as today; otherwise roll to tomorrow so
+    // a plan filed at 2350Z for 0010Z briefs the right day.
+    if ($etd < $now - 3600) $etd += 86400;
+
+    $eta = null;
+    if ($eetHHMM && preg_match('/^\d{2}[0-5]\d$/', $eetHHMM)) {
+        $eta = $etd + ((int)substr($eetHHMM, 0, 2) * 3600) + ((int)substr($eetHHMM, 2) * 60);
+    }
+
+    return ['etd' => $etd, 'eta' => $eta,
+            'hoursToDeparture' => round(($etd - $now) / 3600, 1)];
+}
+
+function ft_is_overlay(array $p): bool {
+    $c = strtoupper((string)($p['fcstChange'] ?? ''));
+    return in_array($c, ['TEMPO', 'PROB'], true) || ($p['probability'] ?? null) !== null;
+}
+
+function ft_ceiling($clouds): ?array {
+    foreach ($clouds ?? [] as $c) {
+        if (in_array($c['cover'] ?? '', ['BKN', 'OVC'], true)) {
+            return ['cover' => $c['cover'], 'base' => $c['base'] ?? null];
+        }
+    }
+    return null;
+}
+
+/** VFR/MVFR/IFR/LIFR from forecast visibility and ceiling. NOAA does not
+ *  publish fltCat on TAF periods, so it is derived — and only with visibility,
+ *  since a category from half the inputs is worse than none. */
+function ft_categorise($visib, $ceilingFt): ?string {
+    if ($visib === null || $visib === '') return null;
+    $v = (float)str_replace('+', '', (string)$visib);
+    if (!is_finite($v)) return null;
+    $c = $ceilingFt === null ? INF : (float)$ceilingFt;
+
+    if ($v < 1 || $c < 500) return 'LIFR';
+    if ($v < 3 || $c < 1000) return 'IFR';
+    if ($v <= 5 || $c <= 3000) return 'MVFR';
+    return 'VFR';
+}
+
+function ft_summarise(?array $p): ?array {
+    if (!$p) return null;
+    $ceil = ft_ceiling($p['clouds'] ?? null);
+    return [
+        'from' => $p['timeFrom'] ?? null, 'to' => $p['timeTo'] ?? null,
+        'change' => $p['fcstChange'] ?? null, 'probability' => $p['probability'] ?? null,
+        'wdir' => $p['wdir'] ?? null, 'wspd' => $p['wspd'] ?? null, 'wgst' => $p['wgst'] ?? null,
+        'visib' => $p['visib'] ?? null, 'wxString' => $p['wxString'] ?? null,
+        'ceiling' => $ceil,
+        'category' => ft_categorise($p['visib'] ?? null, $ceil['base'] ?? null),
+    ];
+}
+
+/** Governing base period plus conditional overlays covering a moment. */
+function ft_forecast_at(?array $periods, ?int $epoch): ?array {
+    if (!$periods || $epoch === null) return null;
+
+    $base = null; $overlays = [];
+    foreach ($periods as $p) {
+        $from = (int)($p['timeFrom'] ?? 0); $to = (int)($p['timeTo'] ?? 0);
+        if (!($from <= $epoch && $epoch < $to)) continue;
+        if (ft_is_overlay($p)) $overlays[] = ft_summarise($p);
+        else $base = ft_summarise($p);   // later FM wins
+    }
+    if (!$base && !$overlays) return null;
+    return ['base' => $base, 'overlays' => array_values(array_filter($overlays))];
+}
+
+/** Mike's "weather +/- 1 hour of departure and arrival" rule. */
+function ft_scan_window(?array $periods, ?int $centre, float $halfHours = 1): ?array {
+    if (!$periods || $centre === null) return null;
+    $from = $centre - (int)($halfHours * 3600);
+    $to   = $centre + (int)($halfHours * 3600);
+    $rank = ['VFR' => 3, 'MVFR' => 2, 'IFR' => 1, 'LIFR' => 0];
+
+    $summaries = [];
+    foreach ($periods as $p) {
+        if ((int)($p['timeFrom'] ?? 0) < $to && (int)($p['timeTo'] ?? 0) > $from) {
+            $s = ft_summarise($p);
+            if ($s && $s['category']) $summaries[] = $s;
+        }
+    }
+    if (!$summaries) return null;
+
+    $worst = $summaries[0];
+    foreach ($summaries as $s) {
+        if (($rank[$s['category']] ?? 9) < ($rank[$worst['category']] ?? 9)) $worst = $s;
+    }
+    return [
+        'windowHours' => $halfHours,
+        'worstCategory' => $worst['category'],
+        'conditional' => $worst['probability'] !== null
+            || in_array(strtoupper((string)$worst['change']), ['TEMPO', 'PROB'], true),
+        'driver' => $worst,
+    ];
 }
 
 // ------------------------------------------------------- flight plan ------
@@ -1283,10 +1397,19 @@ $fetched = fetch_all([
     'arrTaf'   => NOAA_API . '/taf?ids='   . urlencode($arr) . '&format=json',
 ]);
 
-$tafRaw = function (?string $json): ?string {
+// Keep the decoded periods, not just the raw string — they are what lets the
+// briefing report conditions at a planned ETD/ETA rather than only now.
+$tafRaw = function (?string $json): ?array {
     if (!$json) return null;
     $d = json_decode($json, true);
-    return $d[0]['rawTAF'] ?? null;
+    $t = $d[0] ?? null;
+    if (!isset($t['rawTAF'])) return null;
+    return [
+        'raw' => $t['rawTAF'],
+        'validFrom' => $t['validTimeFrom'] ?? null,
+        'validTo' => $t['validTimeTo'] ?? null,
+        'periods' => is_array($t['fcsts'] ?? null) ? $t['fcsts'] : [],
+    ];
 };
 
 $weather = [
@@ -1374,6 +1497,32 @@ $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "This is not an official FAA weather briefing and does not substitute for one.\n"
     . 'The pilot in command is responsible for the go/no-go decision.';
 
+// Apply the flight plan's times to the briefing. Without a proposed departure
+// time this is a report of current conditions; with one, the TAF period
+// governing ETD and ETA is what matters.
+$times = ft_resolve_times(
+    isset($body['departureTime']) ? (string)$body['departureTime'] : null,
+    isset($body['eet']) ? (string)$body['eet'] : null
+);
+$planned = null;
+if ($times) {
+    $planned = [
+        'etd' => $times['etd'],
+        'eta' => $times['eta'],
+        'hoursToDeparture' => $times['hoursToDeparture'],
+        // Current observations stop being representative for a future flight.
+        'observationsRepresentative' => $times['hoursToDeparture'] <= 2,
+        'departure' => [
+            'forecast' => ft_forecast_at($weather['departure']['taf']['periods'] ?? null, $times['etd']),
+            'window' => ft_scan_window($weather['departure']['taf']['periods'] ?? null, $times['etd']),
+        ],
+        'arrival' => [
+            'forecast' => ft_forecast_at($weather['arrival']['taf']['periods'] ?? null, $times['eta']),
+            'window' => ft_scan_window($weather['arrival']['taf']['periods'] ?? null, $times['eta']),
+        ],
+    ];
+}
+
 // Spoken rendering is built from the same data, not from the text briefing.
 $voice = build_voice_briefing([
     'weather' => $weather, 'routeWeather' => $routeWeather, 'winds' => $winds,
@@ -1385,6 +1534,7 @@ echo json_encode([
     'status'    => 'ok',
     'briefing'  => $briefing,
     'voice'     => $voice,
+    'planned'   => $planned,
     // Everything the briefing already knows, so the pilot types as little as
     // possible on the flight plan. Preparation only — nothing is filed.
     'flightPlanPrefill' => fp_prefill($weather, $winds, $aircraft ?: null, $altitude ?: null),

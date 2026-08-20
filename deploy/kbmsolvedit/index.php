@@ -369,6 +369,21 @@
         </div>
       </div>
 
+      <div class="two-col">
+        <div class="form-group">
+          <label for="depTime">Departure time (UTC) <span class="opt">— optional</span></label>
+          <input type="text" id="depTime" name="depTime" placeholder="now" maxlength="4" inputmode="numeric">
+        </div>
+        <div class="form-group">
+          <label for="eetTop">Time enroute <span class="opt">— HHMM</span></label>
+          <input type="text" id="eetTop" name="eetTop" placeholder="auto" maxlength="4" inputmode="numeric">
+        </div>
+      </div>
+      <div class="geolocation-badge" id="timeHint" style="margin:-12px 0 18px;">
+        Leave blank to brief current conditions. Enter a time and the briefing uses the
+        forecast for your departure and arrival instead.
+      </div>
+
       <div class="form-group">
         <label>Your position <span class="opt">— optional, only used if near the route</span></label>
         <div class="loc-modes" role="group" aria-label="Position source">
@@ -413,10 +428,10 @@
       </div>
 
       <div class="fp-wrap">
-        <button type="button" class="toggle-raw" id="toggleFp">File a flight plan ▾</button>
+        <button type="button" class="toggle-raw" id="toggleFp">Prepare a flight plan ▾</button>
         <div id="fpPanel" hidden>
           <div class="fp-notice">
-            <b>Preparation only — this does not file.</b> A flight plan reaches the FAA
+            <b>Prepares your flight plan — it does not transmit it.</b> A flight plan reaches the FAA
             only through Leidos Flight Service, which requires vendor authorisation we
             do not hold. This builds a complete, validated FAA Form 7233-4 for you to
             review and file yourself.
@@ -476,7 +491,7 @@
               <input type="text" id="fpOther" placeholder="0, or RMK/..."></label>
           </form>
 
-          <button type="button" id="fpValidate">Validate flight plan</button>
+          <button type="button" id="fpValidate">Check my flight plan</button>
           <div id="fpResult"></div>
         </div>
       </div>
@@ -566,7 +581,12 @@
         const response = await fetch('api.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ departure, arrival, altitude, aircraft, latitude, longitude })
+          body: JSON.stringify({
+            departure, arrival, altitude, aircraft, latitude, longitude,
+            // Blank means "brief now"; a time switches the briefing to forecasts.
+            departureTime: document.getElementById('depTime').value.trim(),
+            eet: document.getElementById('eetTop').value.trim()
+          })
         });
 
         if (!response.ok) throw new Error('Request failed');
@@ -641,7 +661,7 @@
           ${wxItem('Density alt', m.densityAltitude != null ? m.densityAltitude.toLocaleString() + ' ft' : null)}
         </div>
         <div class="raw">${esc(m.raw)}</div>
-        ${taf ? `<div class="raw" style="margin-top:6px;">${esc(taf)}</div>` : ''}
+        ${taf?.raw ? `<div class="raw" style="margin-top:6px;">${esc(taf.raw)}</div>` : ''}
       </div>`;
     }
 
@@ -769,6 +789,57 @@
           ${hazardHtml}
         </div>
 
+        ${(() => {
+          const pl = data.planned;
+          if (!pl) return '';
+          const z = (e) => e == null ? '—'
+            : new Date(e * 1000).toISOString().slice(11, 16).replace(':', '') + 'Z';
+
+          const leg = (label, icao, side) => {
+            const f = side?.forecast;
+            if (!f) return `<div class="notam-item"><span class="notam-airport">${esc(label)} ${esc(icao || '')}</span>` +
+                           ` — no forecast covers that time.</div>`;
+            const b = f.base;
+            const bits = [];
+            if (b) {
+              if (b.wdir != null) bits.push(`${String(b.wdir).padStart(3, '0')}° at ${b.wspd}kt`);
+              if (b.visib != null) bits.push(`${b.visib} SM`);
+              if (b.ceiling) bits.push(`${b.ceiling.cover} ${Number(b.ceiling.base).toLocaleString()} ft`);
+              if (b.wxString) bits.push(b.wxString);
+            }
+            const cat = b?.category || 'NA';
+            let html = `<div class="notam-item" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">` +
+              `<span class="cat cat-${esc(cat)}">${esc(cat)}</span>` +
+              `<span class="notam-airport">${esc(label)} ${esc(icao || '')}</span>` +
+              `<span style="color:#5a6472;">${esc(bits.join(' · '))}</span></div>`;
+            // Overlays are CONDITIONAL — never merged into the expected weather.
+            for (const o of f.overlays || []) {
+              const ob = [];
+              if (o.visib != null) ob.push(`${o.visib} SM`);
+              if (o.wxString) ob.push(o.wxString);
+              if (o.ceiling) ob.push(`${o.ceiling.cover} ${Number(o.ceiling.base).toLocaleString()} ft`);
+              html += `<div class="notam-item" style="border-left-color:#f9a825;background:#fff8e6;">` +
+                `<b>${esc(o.change === 'PROB' ? `${o.probability}% probability` : 'Temporarily')}</b> — ` +
+                `${esc(ob.join(' · '))}` +
+                `${o.category ? ` <span class="cat cat-${esc(o.category)}">${esc(o.category)}</span>` : ''}</div>`;
+            }
+            return html;
+          };
+
+          const stale = !pl.observationsRepresentative
+            ? `<div class="notam-item" style="border-left-color:#f9a825;background:#fff8e6;">` +
+              `Departure is ${esc(pl.hoursToDeparture)} h away — the surface observations below ` +
+              `are current conditions, not what to expect at that time.</div>`
+            : '';
+
+          return `<div class="section">
+            <div class="section-title">Planned times — ETD ${esc(z(pl.etd))} · ETA ${esc(z(pl.eta))}</div>
+            ${stale}
+            ${leg('Departure', data.weather?.departure?.airport, pl.departure)}
+            ${leg('Arrival', data.weather?.arrival?.airport, pl.arrival)}
+          </div>`;
+        })()}
+
         <div class="section">
           <div class="section-title">Weather — surface</div>
           ${stationCard('Departure', w.departure?.airport || '—', w.departure?.metar, w.departure?.taf)}
@@ -861,7 +932,7 @@
       const p = document.getElementById('fpPanel');
       const open = !p.hidden;
       p.hidden = open;
-      e.target.textContent = open ? 'File a flight plan ▾' : 'Hide flight plan ▴';
+      e.target.textContent = open ? 'Prepare a flight plan ▾' : 'Hide flight plan ▴';
     });
 
     function applyPrefill(pre) {
@@ -900,10 +971,10 @@
         aircraftId: v('fpAircraftId'), flightRules: v('fpRules'),
         typeOfFlight: v('fpTypeOfFlight'), aircraftType: v('fpAircraftType'),
         wakeCategory: v('fpWake'), equipment: v('fpEquipment'),
-        departure: v('fpDeparture'), departureTime: v('fpDepTime'),
+        departure: v('fpDeparture'), departureTime: v('fpDepTime') || document.getElementById('depTime').value.trim(),
         cruisingSpeed: v('fpSpeed'), route: v('fpRoute'),
         altitude: document.getElementById('altitude').value.trim(),
-        destination: v('fpDestination'), eet: v('fpEet'),
+        destination: v('fpDestination'), eet: v('fpEet') || document.getElementById('eetTop').value.trim(),
         endurance: v('fpEndurance'), personsOnBoard: v('fpPob'),
         aircraftColour: v('fpColour'), pilotInCommand: v('fpPic'),
         otherInformation: v('fpOther')
@@ -930,7 +1001,7 @@
             d.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul></div>';
         }
         if (d.ready) {
-          html += `<div class="fp-ok"><b>Complete and valid.</b> Not filed — copy this into ` +
+          html += `<div class="fp-ok"><b>Ready to file.</b> Nothing was transmitted — copy this into ` +
             `1800wxbrief.com, ForeFlight, Garmin Pilot, or read it to a briefer.</div>` +
             `<div class="raw" style="margin-top:10px;">${esc(d.icao)}</div>`;
         }
