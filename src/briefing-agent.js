@@ -15,12 +15,13 @@ export async function generateBriefing({
   longitude,
   weather,
   winds,
+  hazards,
   notams,
   sua
 }) {
   if (!ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY not configured; returning structured fallback');
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua });
   }
 
   const prompt = `You are a flight briefing specialist. Provide a concise, pilot-friendly preflight briefing for:
@@ -36,6 +37,9 @@ ${weather || 'Unable to fetch'}
 
 WINDS AND TEMPERATURES ALOFT (NOAA FB product):
 ${winds || 'Unavailable'}
+
+ADVERSE CONDITIONS (SIGMETs, G-AIRMETs, CWAs on route):
+${hazards || 'Unavailable'}
 
 NOTAMs:
 ${notams || 'None reported'}
@@ -80,8 +84,80 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
     return response.data.content[0].text;
   } catch (err) {
     console.error('AlbertAI API error:', err.message);
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua });
   }
+}
+
+const ft = (n) => n == null ? null : `${Number(n).toLocaleString()}ft`;
+
+// Renders the adverse-conditions block. A source that failed to load is called
+// out explicitly — "none found" must never stand in for "did not check".
+export function describeHazards(h) {
+  if (!h || !h.available) {
+    return `Adverse conditions not checked (${h?.reason || 'no data'})`;
+  }
+
+  const lines = [];
+
+  const band = (lo, hi) => {
+    const a = ft(lo), b = ft(hi);
+    if (a && b) return ` ${a}–${b}`;
+    if (b) return ` up to ${b}`;
+    if (a) return ` above ${a}`;
+    return '';
+  };
+
+  for (const s of h.convectiveSigmets) {
+    const first = (s.raw || '').split('\n').find(l => l.includes('CONVECTIVE SIGMET')) || 'Convective SIGMET';
+    lines.push(`• CONVECTIVE SIGMET — ${first.trim()}${band(s.altitudeLow, s.altitudeHigh)}`);
+  }
+
+  for (const s of h.sigmets) {
+    lines.push(`• SIGMET ${s.hazard || ''}`.trimEnd() +
+               `${s.severity != null ? ` (severity ${s.severity})` : ''}${band(s.altitudeLow, s.altitudeHigh)}`);
+  }
+
+  // Collapse G-AIRMETs: NOAA issues one per forecast hour, so listing each
+  // produces a wall of duplicates for what is really one hazard type. Take the
+  // widest band across periods so the summary cannot understate the extent.
+  const byHazard = new Map();
+  for (const g of h.gairmets) {
+    const key = g.hazard || 'UNKNOWN';
+    if (!byHazard.has(key)) byHazard.set(key, []);
+    byHazard.get(key).push(g);
+  }
+
+  for (const [hazard, list] of byHazard) {
+    // Altitudes are already decoded from hundreds-of-feet by gairmetAltitude().
+    const tops = list.map(g => g.top?.ft).filter(v => v != null);
+    const levels = list.map(g => g.level?.ft).filter(v => v != null);
+    const baseLabels = [...new Set(list.map(g => g.base?.label).filter(Boolean))];
+
+    let extent = '';
+    if (tops.length) {
+      const base = baseLabels.length === 1 ? baseLabels[0] : null;
+      extent = base ? ` ${base} to ${ft(Math.max(...tops))}` : ` to ${ft(Math.max(...tops))}`;
+    } else if (levels.length) {
+      const lo = Math.min(...levels), hi = Math.max(...levels);
+      extent = lo === hi ? ` at ${ft(lo)}` : ` ${ft(lo)}–${ft(hi)}`;
+    }
+
+    lines.push(`• G-AIRMET ${hazard}${extent} (${list.length} period${list.length > 1 ? 's' : ''})`);
+  }
+
+  for (const c of h.cwas) {
+    lines.push(`• Center Weather Advisory — ${c.name || c.cwsu || ''} ${c.hazard || ''}`.trimEnd());
+  }
+
+  if (!lines.length) {
+    lines.push(`No SIGMETs, G-AIRMETs or Center Weather Advisories within ${h.corridorNm}nm of the route.`);
+  }
+
+  if (h.partial) {
+    lines.push(`⚠ ${h.partial.join(' and ')} source unavailable — this list may be incomplete.`);
+  }
+
+  return lines.join('\n');
 }
 
 function describeWinds(label, w) {
@@ -107,7 +183,7 @@ function roundHalfAwayFromZero(n) {
 
 // Formats only NOAA-decoded fields — no local METAR parsing.
 // Exported for the conformance suite: the PHP port must render this identically.
-export function describeStation(label, icao, m) {
+export function describeStation(label, icao, m, taf = null) {
   if (!m) return `${label} (${icao}): weather unavailable`;
 
   const bits = [];
@@ -133,13 +209,29 @@ export function describeStation(label, icao, m) {
   }
   if (m.altim != null) bits.push(`Altimeter ${(m.altim / 33.8639).toFixed(2)}inHg`);
 
-  return `${label} (${icao}): ${bits.join(' · ')}\n  ${m.raw}`;
+  // Mike's first briefing item: temperature + pressure altitude drive aircraft
+  // performance. Density altitude is the number that actually matters.
+  if (m.densityAltitude != null) {
+    bits.push(`Density alt ${m.densityAltitude.toLocaleString()}ft`);
+  }
+
+  const lines = [`${label} (${icao}): ${bits.join(' · ')}`, `  ${m.raw}`];
+  if (taf) lines.push(`  ${taf}`);
+  return lines.join('\n');
 }
 
-function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, notams, sua }) {
+function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
   let weatherSummary = 'Unable to fetch weather data';
   let windSummary = 'Winds aloft unavailable';
+  let hazardSummary = 'Adverse conditions not checked';
+
+  try {
+    const h = typeof hazards === 'string' ? JSON.parse(hazards) : hazards;
+    if (h) hazardSummary = describeHazards(h);
+  } catch (e) {
+    // Keep default
+  }
   let notamSummary = 'No NOTAMs reported';
   let suaSummary = 'No special use airspace alerts';
   let cats = [];
@@ -159,8 +251,8 @@ function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, win
   try {
     const w = typeof weather === 'string' ? JSON.parse(weather) : weather;
     weatherSummary = [
-      describeStation('Departure', departure, w.departure?.metar),
-      describeStation('Arrival', arrival, w.arrival?.metar)
+      describeStation('Departure', departure, w.departure?.metar, w.departure?.taf),
+      describeStation('Arrival', arrival, w.arrival?.metar, w.arrival?.taf)
     ].join('\n\n');
     cats = [w.departure?.metar?.fltCat, w.arrival?.metar?.fltCat].filter(Boolean);
   } catch (e) {
@@ -195,6 +287,9 @@ function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, win
                (aircraft ? ` — ${aircraft}` : '');
 
   return `${head}
+
+ADVERSE CONDITIONS:
+${hazardSummary}
 
 WEATHER:
 ${weatherSummary}

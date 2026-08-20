@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { getWeatherBriefing } from './weather-fetcher.js';
 import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
 import { fetchWindsAloft } from './winds-fetcher.js';
+import { fetchHazards } from './hazards-fetcher.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -45,6 +46,15 @@ app.post('/api/briefing', async (req, res) => {
 
     const winds = { departure: depWinds, arrival: arrWinds };
 
+    // Route geometry: the two airports plus the pilot's reported position, so a
+    // hazard near where the aircraft actually is counts even when it sits off
+    // the direct line between the airports.
+    const hazards = await fetchHazards([
+      { lat: weather.departure?.metar?.lat, lon: weather.departure?.metar?.lon },
+      { lat: weather.arrival?.metar?.lat, lon: weather.arrival?.metar?.lon },
+      { lat: latitude, lon: longitude }
+    ]);
+
     // Synthesize briefing via AlbertAI
     const briefing = await generateBriefing({
       departure: dep,
@@ -55,6 +65,7 @@ app.post('/api/briefing', async (req, res) => {
       longitude,
       weather: JSON.stringify(weather),
       winds: JSON.stringify(winds),
+      hazards: JSON.stringify(hazards),
       notams: JSON.stringify(notams),
       sua: JSON.stringify(sua)
     });
@@ -64,6 +75,7 @@ app.post('/api/briefing', async (req, res) => {
       briefing,
       weather,
       winds,
+      hazards,
       notams,
       sua,
       aircraft: aircraft ? aircraft.toUpperCase() : null,

@@ -1,0 +1,42 @@
+{
+  "_comment": "Pressure/density altitude. The two KULM and KLUM cases are REFERENCE VALUES published by Garmin Pilot in its Aug 20 2026 briefing PDF - an independent implementation - and our moist-air method matches them to within 25 ft. The dry elevation+120*(OAT-ISA) rule of thumb misses both by ~260 ft LOW, and understating density altitude is the dangerous direction. Tolerance is +/-30 ft to absorb Garmin publishing integer temps.",
+  "toleranceFt": 30,
+  "cases": [
+    {
+      "icao": "KULM",
+      "input": { "elev": 305, "temp": 17, "dewp": 16, "altim": 1017.6 },
+      "expectDensityAltitude": 1586,
+      "why": "Garmin published 1586 ft. Altimeter 30.05 inHg = 1017.6 hPa. Near-saturated, so the humidity correction matters."
+    },
+    {
+      "icao": "KLUM",
+      "input": { "elev": 271, "temp": 15, "dewp": 15, "altim": 1018.3 },
+      "expectDensityAltitude": 1170,
+      "why": "Garmin published 1170 ft. Altimeter 30.07 inHg = 1018.3 hPa. Fully saturated (temp == dewpoint)."
+    },
+    {
+      "icao": "KDEN",
+      "input": { "elev": 1656, "temp": 31.1, "dewp": 10, "altim": 1024.1 },
+      "expectDensityAltitude": 8277,
+      "why": "REGRESSION ANCHOR (not an external reference). Hot and high: a 5431 ft field on a 31C day yields a density altitude ~2850 ft above field elevation."
+    },
+    {
+      "icao": "KDFW",
+      "input": { "elev": 185, "temp": 37.8, "dewp": 19.4, "altim": 1015.4 },
+      "expectDensityAltitude": 3531,
+      "why": "REGRESSION ANCHOR (not an external reference). The live demo flight: 38C at DFW puts density altitude ~2900 ft above the 607 ft field - a real factor for a loaded heavy."
+    },
+    {
+      "icao": "NOELEV",
+      "input": { "elev": null, "temp": 20, "dewp": 10, "altim": 1013.25 },
+      "expectDensityAltitude": null,
+      "why": "missing elevation must return null, never a guess"
+    },
+    {
+      "icao": "NOTEMP",
+      "input": { "elev": 300, "temp": null, "dewp": null, "altim": 1013.25 },
+      "expectDensityAltitude": null,
+      "why": "missing temperature must return null"
+    }
+  ]
+}

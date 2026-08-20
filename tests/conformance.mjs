@@ -62,6 +62,25 @@ const groups = fx('fb-groups.json').cases;
 const lines = fx('fb-lines.json').cases;
 const levels = fx('levels.json').cases;
 const stations = fx('metar-stations.json').cases;
+const gairmetAlt = fx('gairmet-altitude.json').cases;
+const densityFx = fx('density-altitude.json');
+const density = densityFx.cases;
+const DA_TOLERANCE = densityFx.toleranceFt ?? 30;
+
+// Density altitude is compared against externally published figures (Garmin),
+// so it gets a tolerance rather than exact equality.
+function checkNear(suite, name, actual, expected, tol, why) {
+  checks++;
+  const ok = (actual === null && expected === null) ||
+             (typeof actual === 'number' && typeof expected === 'number' &&
+              Math.abs(actual - expected) <= tol);
+  if (ok) return;
+  failures++;
+  console.log(`${RED}FAIL${OFF}  ${suite} :: ${name}`);
+  console.log(`        expected: ${expected} ±${tol}`);
+  console.log(`        actual:   ${actual}`);
+  if (why) console.log(`        ${DIM}${why}${OFF}`);
+}
 
 function verify(implName, impl) {
   groups.forEach((c, i) => {
@@ -84,7 +103,26 @@ function verify(implName, impl) {
   stations.forEach((c, i) => {
     check(`${implName}/metar`, c.icao, impl.stations[i], c.expect, c.why);
   });
+
+  density.forEach((c, i) => {
+    checkNear(`${implName}/density-alt`, c.icao, impl.density[i],
+              c.expectDensityAltitude, DA_TOLERANCE, c.why);
+  });
+
+  // Ported to JS first; the PHP half is checked once api.php grows hazards.
+  if (impl.gairmetAlt) {
+    gairmetAlt.forEach((c, i) => {
+      const expected = c.expectLabel === null
+        ? null
+        : { ft: c.expectFt, label: c.expectLabel };
+      check(`${implName}/gairmet-alt`, JSON.stringify(c.raw), impl.gairmetAlt[i], expected, c.why);
+    });
+  } else {
+    notPorted.push(`${implName}: gairmet-alt`);
+  }
 }
+
+const notPorted = [];
 
 verify('JS', js);
 if (php) verify('PHP', php);
@@ -92,13 +130,19 @@ if (php) verify('PHP', php);
 // ----------------------------------------------------------- cross-impl ---
 
 if (php) {
-  for (const key of ['groups', 'lines', 'levels', 'stations']) {
+  // Only diff suites both implementations actually produce.
+  const shared = ['groups', 'lines', 'levels', 'stations', 'density', 'gairmetAlt']
+    .filter(k => Array.isArray(js[k]) && Array.isArray(php[k]));
+
+  for (const key of shared) {
     js[key].forEach((v, i) => {
       const label = {
         groups: () => `"${groups[i].raw}"`,
         lines: () => lines[i].id ?? '(non-station row)',
         levels: () => `${levels[i].altitude} ft`,
-        stations: () => stations[i].icao
+        stations: () => stations[i].icao,
+        density: () => density[i].icao,
+        gairmetAlt: () => JSON.stringify(gairmetAlt[i].raw)
       }[key]();
       check('JS<->PHP drift', `${key} ${label}`, php[key][i], v,
             'the two implementations disagree — one of them is wrong');
@@ -112,6 +156,10 @@ console.log('');
 if (phpError) {
   console.log(`${YELLOW}SKIPPED${OFF} PHP half — could not run \`php\`: ${phpError}`);
   console.log(`${YELLOW}        The JS<->PHP drift check did NOT run.${OFF}`);
+}
+
+if (notPorted.length) {
+  console.log(`${YELLOW}NOT PORTED${OFF} ${notPorted.join(', ')} — no cross-implementation check for these yet.`);
 }
 
 if (failures === 0) {

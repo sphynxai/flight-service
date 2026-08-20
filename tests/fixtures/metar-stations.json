@@ -83,6 +83,20 @@
     },
     {
       "label": "Departure",
+      "icao": "KDEN",
+      "metar": {
+        "raw": "METAR KDEN 201753Z 02010KT 10SM FEW100 31/10 A3024",
+        "fltCat": "VFR", "wdir": 20, "wspd": 10, "wgst": null,
+        "visib": "10+", "wxString": null, "temp": 31.1, "dewp": 10.0, "altim": 1024.1,
+        "densityAltitude": 8277,
+        "clouds": [ { "cover": "FEW", "base": 10000 } ]
+      },
+      "taf": "TAF KDEN 201720Z 2018/2124 04008KT P6SM SCT120",
+      "expect": "Departure (KDEN): VFR · Wind 20° at 10kt · Vis 10+SM · No ceiling reported · 31°C/10°C · Altimeter 30.24inHg · Density alt 8,277ft\n  METAR KDEN 201753Z 02010KT 10SM FEW100 31/10 A3024\n  TAF KDEN 201720Z 2018/2124 04008KT P6SM SCT120",
+      "why": "density altitude and TAF both render; thousands separator on the DA figure"
+    },
+    {
+      "label": "Departure",
       "icao": "KXYZ",
       "metar": null,
       "expect": "Departure (KXYZ): weather unavailable",

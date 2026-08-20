@@ -1,0 +1,17 @@
+{
+  "_comment": "G-AIRMET altitude encoding. Values are in HUNDREDS OF FEET and the base may be a keyword. Reading them literally understates a hazard by a factor of 100 - an icing layer topping 24,000 ft renders as '240 ft'. All raw values below were observed live from NOAA on 2026-08-20.",
+  "cases": [
+    { "raw": 240,     "expectFt": 24000, "expectLabel": "24,000ft",       "why": "live ICE top: FL240, not 240 ft" },
+    { "raw": 400,     "expectFt": 40000, "expectLabel": "40,000ft",       "why": "live TURB-HI top" },
+    { "raw": 270,     "expectFt": 27000, "expectLabel": "27,000ft",       "why": "live TURB-HI base" },
+    { "raw": 220,     "expectFt": 22000, "expectLabel": "22,000ft",       "why": "live TURB-LO top" },
+    { "raw": "160",   "expectFt": 16000, "expectLabel": "16,000ft",       "why": "FZLVL level arrives as a zero-padded STRING" },
+    { "raw": "080",   "expectFt": 8000,  "expectLabel": "8,000ft",        "why": "leading zero must not be read as octal or dropped" },
+    { "raw": "SFC",   "expectFt": 0,     "expectLabel": "surface",        "why": "keyword base, not a number" },
+    { "raw": "FZL",   "expectFt": null,  "expectLabel": "freezing level", "why": "keyword base with no fixed altitude" },
+    { "raw": "sfc",   "expectFt": 0,     "expectLabel": "surface",        "why": "keyword matching must be case-insensitive" },
+    { "raw": null,    "expectFt": null,  "expectLabel": null,             "why": "absent altitude yields nothing, never zero" },
+    { "raw": "",      "expectFt": null,  "expectLabel": null,             "why": "empty string is not surface" },
+    { "raw": "ABC",   "expectFt": null,  "expectLabel": null,             "why": "unparseable keyword must not decode" }
+  ]
+}

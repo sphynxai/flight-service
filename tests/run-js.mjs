@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 import { parseGroup, parseStationLine, nearestLevel } from '../src/winds-fetcher.js';
+import { computeAltitudes } from '../src/weather-fetcher.js';
+import { gairmetAltitude, routeBounds, boundsIntersect } from '../src/hazards-fetcher.js';
 import { describeStation } from '../src/briefing-agent.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +21,7 @@ const norm = (g) => g === null || g === undefined ? null : {
   lightVariable: Boolean(g.lightVariable)
 };
 
-const out = { groups: [], lines: [], levels: [], stations: [] };
+const out = { groups: [], lines: [], levels: [], stations: [], density: [], gairmetAlt: [] };
 
 for (const c of fx('fb-groups.json').cases) {
   out.groups.push(norm(parseGroup(c.raw)));
@@ -39,7 +41,16 @@ for (const c of fx('levels.json').cases) {
 }
 
 for (const c of fx('metar-stations.json').cases) {
-  out.stations.push(describeStation(c.label, c.icao, c.metar));
+  out.stations.push(describeStation(c.label, c.icao, c.metar, c.taf ?? null));
+}
+
+for (const c of fx('density-altitude.json').cases) {
+  out.density.push(computeAltitudes(c.input).densityAltitude);
+}
+
+for (const c of fx('gairmet-altitude.json').cases) {
+  const a = gairmetAltitude(c.raw);
+  out.gairmetAlt.push(a === null ? null : { ft: a.ft, label: a.label });
 }
 
 process.stdout.write(JSON.stringify(out));

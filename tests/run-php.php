@@ -24,7 +24,7 @@ function norm(?array $g): ?array {
     ];
 }
 
-$out = ['groups' => [], 'lines' => [], 'levels' => [], 'stations' => []];
+$out = ['groups' => [], 'lines' => [], 'levels' => [], 'stations' => [], 'density' => []];
 
 foreach (fx('fb-groups.json')['cases'] as $c) {
     $out['groups'][] = norm(fb_parse_group($c['raw']));
@@ -44,7 +44,12 @@ foreach (fx('levels.json')['cases'] as $c) {
 }
 
 foreach (fx('metar-stations.json')['cases'] as $c) {
-    $out['stations'][] = describe_station($c['label'], $c['icao'], $c['metar']);
+    $out['stations'][] = describe_station($c['label'], $c['icao'], $c['metar'], $c['taf'] ?? null);
+}
+
+foreach (fx('density-altitude.json')['cases'] as $c) {
+    $i = $c['input'];
+    $out['density'][] = compute_altitudes($i['elev'], $i['temp'], $i['dewp'], $i['altim'])['densityAltitude'];
 }
 
 // JSON_PRESERVE_ZERO_FRACTION keeps numeric types comparable with the JS side.
