@@ -7,7 +7,8 @@ module.exports = {
       exec_mode: 'cluster',
       env: {
         NODE_ENV: 'production',
-        PORT: 3003
+        PORT: 3003,
+        ANTHROPIC_API_KEY: '${ANTHROPIC_API_KEY}'
       },
       env_development: {
         NODE_ENV: 'development',
