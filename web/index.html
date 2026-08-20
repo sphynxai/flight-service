@@ -363,7 +363,7 @@
     }
 
     // Renders only fields NOAA decoded server-side — no METAR parsing here.
-    function stationCard(label, icao, m) {
+    function stationCard(label, icao, m, taf) {
       if (!m) {
         return `<div class="station"><div class="station-head">` +
                `<span class="station-id">${esc(icao)}</span>` +
@@ -395,8 +395,11 @@
           ${wxItem('Present wx', m.wxString)}
           ${wxItem('Temp / Dew', m.temp != null ? `${roundTemp(m.temp)}°C / ${roundTemp(m.dewp)}°C` : null)}
           ${wxItem('Altimeter', m.altim != null ? (m.altim / 33.8639).toFixed(2) + ' inHg' : null)}
+          ${wxItem('Pressure alt', m.pressureAltitude != null ? m.pressureAltitude.toLocaleString() + ' ft' : null)}
+          ${wxItem('Density alt', m.densityAltitude != null ? m.densityAltitude.toLocaleString() + ' ft' : null)}
         </div>
         <div class="raw">${esc(m.raw)}</div>
+        ${taf ? `<div class="raw" style="margin-top:6px;">${esc(taf)}</div>` : ''}
       </div>`;
     }
 
@@ -444,15 +447,79 @@
         data.altitude ? `${Number(data.altitude).toLocaleString()} ft` : null
       ].filter(Boolean).join(' · ');
 
+      const hz = data.hazards;
+      let hazardHtml;
+      if (!hz || !hz.available) {
+        hazardHtml = `<div class="notam-item">Adverse conditions not checked ` +
+                     `<span style="color:#8a93a0;">(${esc(hz?.reason || 'no data')})</span></div>`;
+      } else {
+        const items = [];
+        const band = (lo, hi) => {
+          const f = (n) => n == null ? null : Number(n).toLocaleString() + 'ft';
+          if (lo != null && hi != null) return ` ${f(lo)}–${f(hi)}`;
+          if (hi != null) return ` up to ${f(hi)}`;
+          if (lo != null) return ` above ${f(lo)}`;
+          return '';
+        };
+        for (const s of hz.convectiveSigmets || []) {
+          const first = (s.raw || '').split('\n').find(l => l.includes('CONVECTIVE SIGMET')) || 'Convective SIGMET';
+          items.push(`<div class="notam-item" style="border-left-color:#c62828;">` +
+            `<span class="notam-airport">CONVECTIVE SIGMET</span> — ${esc(first.trim())}` +
+            `${esc(band(s.altitudeLow, s.altitudeHigh))}</div>`);
+        }
+        for (const s of hz.sigmets || []) {
+          items.push(`<div class="notam-item" style="border-left-color:#ef6c00;">` +
+            `<span class="notam-airport">SIGMET ${esc(s.hazard || '')}</span>` +
+            `${esc(band(s.altitudeLow, s.altitudeHigh))}</div>`);
+        }
+        const byHaz = {};
+        for (const g of hz.gairmets || []) (byHaz[g.hazard || 'UNKNOWN'] ||= []).push(g);
+        for (const [hazard, list] of Object.entries(byHaz)) {
+          // Altitudes already decoded from hundreds-of-feet server-side.
+          const tops = list.map(g => g.top?.ft).filter(v => v != null);
+          const levels = list.map(g => g.level?.ft).filter(v => v != null);
+          const bases = [...new Set(list.map(g => g.base?.label).filter(Boolean))];
+          let ext = '';
+          if (tops.length) {
+            ext = (bases.length === 1 ? ` ${bases[0]} to ` : ' to ') + Math.max(...tops).toLocaleString() + 'ft';
+          } else if (levels.length) {
+            const lo = Math.min(...levels), hi = Math.max(...levels);
+            ext = lo === hi ? ` at ${lo.toLocaleString()}ft` : ` ${lo.toLocaleString()}ft–${hi.toLocaleString()}ft`;
+          }
+          items.push(`<div class="notam-item" style="border-left-color:#1565c0;">` +
+            `<span class="notam-airport">G-AIRMET ${esc(hazard)}</span>${esc(ext)} ` +
+            `<span style="color:#8a93a0;">(${list.length})</span></div>`);
+        }
+        for (const c of hz.cwas || []) {
+          items.push(`<div class="notam-item" style="border-left-color:#6a1b9a;">` +
+            `<span class="notam-airport">Center Weather Advisory</span> — ` +
+            `${esc(c.name || c.cwsu || '')} ${esc(c.hazard || '')}</div>`);
+        }
+        if (!items.length) {
+          items.push(`<div class="notam-item">No SIGMETs, G-AIRMETs or Center Weather ` +
+                     `Advisories within ${esc(hz.corridorNm)}nm of the route.</div>`);
+        }
+        if (hz.partial) {
+          items.push(`<div class="notam-item" style="border-left-color:#f9a825;">` +
+            `${esc(hz.partial.join(' and '))} source unavailable — this list may be incomplete.</div>`);
+        }
+        hazardHtml = items.join('');
+      }
+
       document.getElementById('briefingRender').innerHTML = `
         ${route ? `<div class="section"><div class="section-title">Flight</div>
           <div class="notam-item">${esc(w.departure?.airport || '')} →
           ${esc(w.arrival?.airport || '')} · ${route}</div></div>` : ''}
 
         <div class="section">
+          <div class="section-title">Adverse conditions</div>
+          ${hazardHtml}
+        </div>
+
+        <div class="section">
           <div class="section-title">Weather — surface</div>
-          ${stationCard('Departure', w.departure?.airport || '—', w.departure?.metar)}
-          ${stationCard('Arrival', w.arrival?.airport || '—', w.arrival?.metar)}
+          ${stationCard('Departure', w.departure?.airport || '—', w.departure?.metar, w.departure?.taf)}
+          ${stationCard('Arrival', w.arrival?.airport || '—', w.arrival?.metar, w.arrival?.taf)}
         </div>
 
         <div class="section">

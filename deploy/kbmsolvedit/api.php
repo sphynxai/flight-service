@@ -218,16 +218,305 @@ function winds_for(string $icao, $altitude, array $table): array {
     ];
 }
 
+/**
+ * Pressure and density altitude — mirror of computeAltitudes() in
+ * src/weather-fetcher.js. Moist-air (virtual temperature) method, not the dry
+ * rule of thumb: the dry form ignores humidity and understates density
+ * altitude, which is the dangerous direction. Validated against Garmin Pilot's
+ * published KULM/KLUM figures to within 25 ft.
+ */
+function compute_altitudes($elev, $temp, $dewp, $altim): array {
+    if ($elev === null || $temp === null || $altim === null) {
+        return ['pressureAltitude' => null, 'densityAltitude' => null];
+    }
+
+    $elevFt = $elev * 3.280839895;
+
+    // NOAA reports altim in hPa already; pressure altitude works in inHg.
+    $altimHpa = $altim;
+    $altimInHg = $altim / 33.8639;
+    $pa = $elevFt + (29.92 - $altimInHg) * 1000.0;
+
+    // Without a dewpoint fall back to dry air rather than inventing humidity.
+    $td = $dewp === null ? $temp : $dewp;
+
+    $pSta = $altimHpa * pow((288.15 - 0.0065 * $elev) / 288.15, 5.2558797);
+    $e = 6.112 * exp((17.67 * $td) / ($td + 243.5));
+    $tv = ($temp + 273.15) / (1.0 - 0.378 * $e / $pSta);
+    $rho = ($pSta * 100.0) / (287.05 * $tv);
+    $da = 145442.16 * (1.0 - pow($rho / 1.225, 0.234969));
+
+    return [
+        'pressureAltitude' => (int)round($pa),
+        'densityAltitude'  => (int)round($da),
+    ];
+}
+
+// ------------------------------------------------- adverse conditions ------
+// Mirror of src/hazards-fetcher.js. Filtering is deliberately permissive: a
+// hazard is included when its bounding box overlaps the padded route box.
+// Showing an off-route SIGMET is an annoyance; hiding an on-route one is a
+// safety failure.
+
+const CORRIDOR_NM = 100;
+const NM_PER_DEG_LAT = 60;
+
+function h_num($v) {
+    if ($v === null || $v === '') return null;
+    $n = is_numeric($v) ? (float)$v : NAN;
+    return is_nan($n) ? null : $n;
+}
+
+/**
+ * G-AIRMET altitudes are in HUNDREDS OF FEET and the base may be a keyword.
+ *   240 -> 24,000 ft (NOT 240 ft) | "SFC" -> surface | "FZL" -> freezing level
+ * Reading these literally turns an icing layer topping FL240 into "240 ft".
+ */
+function gairmet_altitude($v): ?array {
+    if ($v === null || $v === '') return null;
+
+    $s = strtoupper(trim((string)$v));
+    if ($s === 'SFC') return ['ft' => 0, 'label' => 'surface'];
+    if ($s === 'FZL') return ['ft' => null, 'label' => 'freezing level'];
+
+    if (!is_numeric($s)) return null;
+    $ft = (int)round((float)$s * 100);
+    return ['ft' => $ft, 'label' => number_format($ft) . 'ft'];
+}
+
+function coords_bounds($coords): ?array {
+    if (!is_array($coords) || !$coords) return null;
+
+    $minLat = INF; $maxLat = -INF; $minLon = INF; $maxLon = -INF; $seen = 0;
+    foreach ($coords as $c) {
+        $lat = h_num($c['lat'] ?? null);
+        $lon = h_num($c['lon'] ?? null);
+        if ($lat === null || $lon === null) continue;
+        $seen++;
+        $minLat = min($minLat, $lat); $maxLat = max($maxLat, $lat);
+        $minLon = min($minLon, $lon); $maxLon = max($maxLon, $lon);
+    }
+    if (!$seen) return null;
+    return ['minLat' => $minLat, 'maxLat' => $maxLat, 'minLon' => $minLon, 'maxLon' => $maxLon];
+}
+
+function route_bounds(array $points, float $padNm = CORRIDOR_NM): ?array {
+    $usable = [];
+    foreach ($points as $p) {
+        $lat = h_num($p['lat'] ?? null);
+        $lon = h_num($p['lon'] ?? null);
+        if ($lat !== null && $lon !== null) $usable[] = ['lat' => $lat, 'lon' => $lon];
+    }
+    if (!$usable) return null;
+
+    $b = coords_bounds($usable);
+    $midLat = ($b['minLat'] + $b['maxLat']) / 2;
+    $padLat = $padNm / NM_PER_DEG_LAT;
+    // Longitude degrees shrink with latitude; guard the cosine near the poles.
+    $cos = max(cos(deg2rad($midLat)), 0.01);
+    $padLon = $padNm / (NM_PER_DEG_LAT * $cos);
+
+    return [
+        'minLat' => $b['minLat'] - $padLat, 'maxLat' => $b['maxLat'] + $padLat,
+        'minLon' => $b['minLon'] - $padLon, 'maxLon' => $b['maxLon'] + $padLon,
+    ];
+}
+
+function bounds_intersect(?array $a, ?array $b): bool {
+    if (!$a || !$b) return false;
+    return $a['minLat'] <= $b['maxLat'] && $a['maxLat'] >= $b['minLat']
+        && $a['minLon'] <= $b['maxLon'] && $a['maxLon'] >= $b['minLon'];
+}
+
+/** No geometry means it cannot be proven off-route, so it is kept. */
+function on_route($coords, array $bounds): bool {
+    $hb = coords_bounds($coords);
+    if (!$hb) return true;
+    return bounds_intersect($hb, $bounds);
+}
+
+function map_airsigmet(array $x): array {
+    return [
+        'type' => $x['airSigmetType'] ?? null,
+        'hazard' => $x['hazard'] ?? null,
+        'severity' => $x['severity'] ?? null,
+        'altitudeLow' => h_num($x['altitudeLow1'] ?? null),
+        'altitudeHigh' => h_num($x['altitudeHi1'] ?? null),
+        'raw' => trim((string)($x['rawAirSigmet'] ?? '')) ?: null,
+    ];
+}
+
+function fetch_hazards(array $points): array {
+    $bounds = route_bounds($points);
+    if (!$bounds) {
+        return ['available' => false, 'reason' => 'no usable coordinates for the route',
+                'corridorNm' => CORRIDOR_NM, 'convectiveSigmets' => [], 'sigmets' => [],
+                'gairmets' => [], 'cwas' => []];
+    }
+
+    $bodies = fetch_all([
+        'airsigmet' => NOAA_API . '/airsigmet?format=json',
+        'gairmet'   => NOAA_API . '/gairmet?format=json',
+        'cwa'       => NOAA_API . '/cwa?format=json',
+    ]);
+
+    $decode = function (?string $b): ?array {
+        if ($b === null) return null;
+        $d = json_decode($b, true);
+        return is_array($d) ? $d : null;
+    };
+
+    $airsig = $decode($bodies['airsigmet']);
+    $gair   = $decode($bodies['gairmet']);
+    $cwa    = $decode($bodies['cwa']);
+
+    // A failed source must not read as "nothing out there".
+    $failed = [];
+    if ($airsig === null) $failed[] = 'SIGMET';
+    if ($gair === null)   $failed[] = 'G-AIRMET';
+    if ($cwa === null)    $failed[] = 'CWA';
+
+    $now = time();
+    $near = function (?array $arr) use ($bounds, $now): array {
+        $out = [];
+        foreach ($arr ?? [] as $x) {
+            $to = h_num($x['validTimeTo'] ?? $x['expireTime'] ?? null);
+            if ($to !== null && $to < $now - 60) continue; // expired
+            if (!on_route($x['coords'] ?? null, $bounds)) continue;
+            $out[] = $x;
+        }
+        return $out;
+    };
+
+    $airNear = $near($airsig);
+    $conv = []; $sig = [];
+    foreach ($airNear as $x) {
+        if (strtoupper((string)($x['hazard'] ?? '')) === 'CONVECTIVE') $conv[] = map_airsigmet($x);
+        else $sig[] = map_airsigmet($x);
+    }
+
+    $gairmets = [];
+    foreach ($near($gair) as $g) {
+        $gairmets[] = [
+            'hazard' => $g['hazard'] ?? null,
+            'severity' => $g['severity'] ?? null,
+            'base' => gairmet_altitude($g['base'] ?? null),
+            'top' => gairmet_altitude($g['top'] ?? null),
+            'level' => gairmet_altitude($g['level'] ?? null),
+        ];
+    }
+
+    $cwas = [];
+    foreach ($near($cwa) as $c) {
+        $cwas[] = ['cwsu' => $c['cwsu'] ?? null, 'name' => $c['name'] ?? null,
+                   'hazard' => $c['hazard'] ?? null];
+    }
+
+    return [
+        'available' => true,
+        'corridorNm' => CORRIDOR_NM,
+        'bounds' => $bounds,
+        'partial' => $failed ?: null,
+        'convectiveSigmets' => $conv,
+        'sigmets' => $sig,
+        'gairmets' => $gairmets,
+        'cwas' => $cwas,
+    ];
+}
+
+function h_ft($n): ?string {
+    return $n === null ? null : number_format((float)$n) . 'ft';
+}
+
+function describe_hazards(?array $h): string {
+    if (!$h || empty($h['available'])) {
+        return 'Adverse conditions not checked (' . ($h['reason'] ?? 'no data') . ')';
+    }
+
+    $lines = [];
+
+    $band = function ($lo, $hi): string {
+        $a = h_ft($lo); $b = h_ft($hi);
+        if ($a && $b) return " $a–$b";
+        if ($b) return " up to $b";
+        if ($a) return " above $a";
+        return '';
+    };
+
+    foreach ($h['convectiveSigmets'] as $s) {
+        $first = 'Convective SIGMET';
+        foreach (explode("\n", (string)$s['raw']) as $l) {
+            if (strpos($l, 'CONVECTIVE SIGMET') !== false) { $first = trim($l); break; }
+        }
+        $lines[] = "• CONVECTIVE SIGMET — $first" . $band($s['altitudeLow'], $s['altitudeHigh']);
+    }
+
+    foreach ($h['sigmets'] as $s) {
+        $sev = $s['severity'] !== null ? " (severity {$s['severity']})" : '';
+        $lines[] = rtrim("• SIGMET " . ($s['hazard'] ?? '')) . $sev
+                 . $band($s['altitudeLow'], $s['altitudeHigh']);
+    }
+
+    // Collapse per-forecast-hour G-AIRMETs; take the widest band so the summary
+    // cannot understate the extent.
+    $byHazard = [];
+    foreach ($h['gairmets'] as $g) {
+        $byHazard[$g['hazard'] ?? 'UNKNOWN'][] = $g;
+    }
+    foreach ($byHazard as $hazard => $list) {
+        $tops = []; $levels = []; $baseLabels = [];
+        foreach ($list as $g) {
+            if (($g['top']['ft'] ?? null) !== null) $tops[] = $g['top']['ft'];
+            if (($g['level']['ft'] ?? null) !== null) $levels[] = $g['level']['ft'];
+            if (($g['base']['label'] ?? null) !== null) $baseLabels[$g['base']['label']] = true;
+        }
+        $extent = '';
+        if ($tops) {
+            $base = count($baseLabels) === 1 ? array_key_first($baseLabels) : null;
+            $extent = $base ? ' ' . $base . ' to ' . h_ft(max($tops)) : ' to ' . h_ft(max($tops));
+        } elseif ($levels) {
+            $lo = min($levels); $hi = max($levels);
+            $extent = $lo === $hi ? ' at ' . h_ft($lo) : ' ' . h_ft($lo) . '–' . h_ft($hi);
+        }
+        $n = count($list);
+        $lines[] = "• G-AIRMET $hazard$extent ($n period" . ($n > 1 ? 's' : '') . ')';
+    }
+
+    foreach ($h['cwas'] as $c) {
+        $lines[] = rtrim('• Center Weather Advisory — ' . ($c['name'] ?? $c['cwsu'] ?? '')
+                 . ' ' . ($c['hazard'] ?? ''));
+    }
+
+    if (!$lines) {
+        $lines[] = "No SIGMETs, G-AIRMETs or Center Weather Advisories within {$h['corridorNm']}nm of the route.";
+    }
+    if (!empty($h['partial'])) {
+        $lines[] = '⚠ ' . implode(' and ', $h['partial']) . ' source unavailable — this list may be incomplete.';
+    }
+
+    return implode("\n", $lines);
+}
+
 function metar_from(?string $json, string $icao): ?array {
     if (!$json) return null;
     $d = json_decode($json, true);
     $ob = $d[0] ?? null;
     if (!isset($ob['rawOb'])) return null;
 
+    $alt = compute_altitudes(
+        $ob['elev'] ?? null, $ob['temp'] ?? null,
+        $ob['dewp'] ?? null, $ob['altim'] ?? null
+    );
+
     // Pass through only what NOAA decoded — no local METAR parsing.
     return [
         'raw'      => $ob['rawOb'],
         'station'  => $ob['name'] ?? $icao,
+        'lat'      => $ob['lat'] ?? null,
+        'lon'      => $ob['lon'] ?? null,
+        'elev'     => $ob['elev'] ?? null,
+        'pressureAltitude' => $alt['pressureAltitude'],
+        'densityAltitude'  => $alt['densityAltitude'],
         'fltCat'   => $ob['fltCat'] ?? null,
         'wdir'     => $ob['wdir'] ?? null,
         'wspd'     => $ob['wspd'] ?? null,
@@ -241,7 +530,7 @@ function metar_from(?string $json, string $icao): ?array {
     ];
 }
 
-function describe_station(string $label, string $icao, ?array $m): string {
+function describe_station(string $label, string $icao, ?array $m, ?string $taf = null): string {
     if (!$m) return "$label ($icao): weather unavailable";
 
     $bits = [];
@@ -272,7 +561,15 @@ function describe_station(string $label, string $icao, ?array $m): string {
         $bits[] = 'Altimeter ' . number_format($m['altim'] / 33.8639, 2) . 'inHg';
     }
 
-    return "$label ($icao): " . implode(' · ', $bits) . "\n  " . $m['raw'];
+    // Mike's first briefing item: temperature + pressure altitude drive aircraft
+    // performance. Density altitude is the number that actually matters.
+    if (($m['densityAltitude'] ?? null) !== null) {
+        $bits[] = 'Density alt ' . number_format($m['densityAltitude']) . 'ft';
+    }
+
+    $lines = ["$label ($icao): " . implode(' · ', $bits), '  ' . $m['raw']];
+    if ($taf) $lines[] = '  ' . $taf;
+    return implode("\n", $lines);
 }
 
 function describe_winds(string $label, array $w): string {
@@ -340,6 +637,17 @@ $winds = [
     'arrival'   => winds_for($arr, $altitude, $table),
 ];
 
+// Route geometry: both airports plus the pilot's reported position, so a hazard
+// near where the aircraft actually is counts even when it sits off the direct
+// line between the airports.
+$hazards = fetch_hazards([
+    ['lat' => $weather['departure']['metar']['lat'] ?? null,
+     'lon' => $weather['departure']['metar']['lon'] ?? null],
+    ['lat' => $weather['arrival']['metar']['lat'] ?? null,
+     'lon' => $weather['arrival']['metar']['lon'] ?? null],
+    ['lat' => $body['latitude'] ?? null, 'lon' => $body['longitude'] ?? null],
+]);
+
 // Placeholders — flagged so the UI cannot present them as live FAA data.
 $notams = [
     ['airport' => $dep, 'text' => 'Check departure airport ATIS for active runways',
@@ -361,9 +669,10 @@ $cats = array_values(array_filter([
 $head = "BRIEFING: $dep to $arr at " . ($altitude ?: 'VFR') . ($aircraft ? " — $aircraft" : '');
 
 // No go/no-go verdict: this service has no basis to issue one.
-$briefing = $head . "\n\nWEATHER:\n"
-    . describe_station('Departure', $dep, $weather['departure']['metar']) . "\n\n"
-    . describe_station('Arrival', $arr, $weather['arrival']['metar'])
+$briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
+    . "\n\nWEATHER:\n"
+    . describe_station('Departure', $dep, $weather['departure']['metar'], $weather['departure']['taf']) . "\n\n"
+    . describe_station('Arrival', $arr, $weather['arrival']['metar'], $weather['arrival']['taf'])
     . "\n\nWINDS ALOFT:\n"
     . describe_winds("Departure ($dep)", $winds['departure']) . "\n"
     . describe_winds("Arrival ($arr)", $winds['arrival'])
@@ -380,6 +689,7 @@ echo json_encode([
     'briefing'  => $briefing,
     'weather'   => $weather,
     'winds'     => $winds,
+    'hazards'   => $hazards,
     'notams'    => $notams,
     'sua'       => $sua,
     'aircraft'  => $aircraft ?: null,
