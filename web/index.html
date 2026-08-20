@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flight Service Briefing — AlbertAI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+    }
+    h1 {
+      color: #1e3c72;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      color: #333;
+      font-weight: 500;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    input, select {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #2a5298;
+      box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+    .geolocation-badge {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .location-icon { color: #2a5298; }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: #2a5298;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 10px;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background: #1e3c72;
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .briefing-area {
+      margin-top: 30px;
+      padding-top: 30px;
+      border-top: 1px solid #eee;
+    }
+    .briefing-text {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 6px;
+      line-height: 1.6;
+      color: #333;
+      font-size: 14px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .status {
+      font-size: 12px;
+      color: #666;
+      margin-top: 12px;
+      text-align: center;
+    }
+    .loading {
+      display: inline-block;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .error { color: #d32f2f; }
+    .success { color: #388e3c; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✈️ Flight Service Briefing</h1>
+    <p class="subtitle">Weather, NOTAMs & SUA briefing via AlbertAI</p>
+
+    <form id="briefingForm">
+      <div class="form-group">
+        <label for="departure">Departure Airport (ICAO)</label>
+        <input type="text" id="departure" name="departure" placeholder="KJFK" required>
+      </div>
+
+      <div class="form-group">
+        <label for="arrival">Arrival Airport (ICAO)</label>
+        <input type="text" id="arrival" name="arrival" placeholder="KLAX" required>
+      </div>
+
+      <div class="two-col">
+        <div class="form-group">
+          <label for="altitude">Cruising Altitude (feet)</label>
+          <input type="text" id="altitude" name="altitude" placeholder="8000">
+        </div>
+        <div class="form-group">
+          <label for="aircraft">Aircraft Type (optional)</label>
+          <input type="text" id="aircraft" name="aircraft" placeholder="C172">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Your Location</label>
+        <div class="geolocation-badge">
+          <span class="location-icon">📍</span>
+          <span id="locationStatus">Detecting...</span>
+        </div>
+        <input type="hidden" id="latitude" name="latitude">
+        <input type="hidden" id="longitude" name="longitude">
+      </div>
+
+      <button type="submit">Get Briefing</button>
+      <div class="status" id="status"></div>
+    </form>
+
+    <div class="briefing-area" id="briefingArea" style="display: none;">
+      <h3>Your Briefing</h3>
+      <div class="briefing-text" id="briefingText"></div>
+      <div style="margin-top: 16px; text-align: center;">
+        <button type="button" id="speakButton" style="background: #ff6b35;">🔊 Read Aloud</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Geolocation setup
+    function detectLocation() {
+      const statusEl = document.getElementById('locationStatus');
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
+            document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
+            statusEl.textContent = `📍 ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+          },
+          (err) => {
+            statusEl.textContent = '📍 Geolocation denied (manual entry ok)';
+            console.warn('Geolocation denied:', err);
+          }
+        );
+      } else {
+        statusEl.textContent = '📍 Browser does not support geolocation';
+      }
+    }
+
+    // Request briefing
+    document.getElementById('briefingForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const departure = document.getElementById('departure').value.toUpperCase();
+      const arrival = document.getElementById('arrival').value.toUpperCase();
+      const altitude = document.getElementById('altitude').value;
+      const latitude = parseFloat(document.getElementById('latitude').value);
+      const longitude = parseFloat(document.getElementById('longitude').value);
+
+      const statusEl = document.getElementById('status');
+      statusEl.innerHTML = '<span class="loading">⏳</span> Fetching briefing...';
+
+      try {
+        const response = await fetch('/api/briefing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ departure, arrival, altitude, latitude, longitude })
+        });
+
+        if (!response.ok) throw new Error('Request failed');
+        const data = await response.json();
+
+        // Display briefing
+        document.getElementById('briefingText').textContent = data.briefing;
+        document.getElementById('briefingArea').style.display = 'block';
+        statusEl.innerHTML = '<span class="success">✓ Briefing ready</span>';
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">✗ ${err.message}</span>`;
+      }
+    });
+
+    // Text-to-speech (browser SpeechSynthesis fallback until Albert integrated)
+    document.getElementById('speakButton').addEventListener('click', () => {
+      const text = document.getElementById('briefingText').textContent;
+      if ('speechSynthesis' in window) {
+        speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.9;
+        speechSynthesis.speak(utterance);
+      }
+    });
+
+    // Initialize on load
+    detectLocation();
+  </script>
+</body>
+</html>

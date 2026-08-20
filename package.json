@@ -1,0 +1,23 @@
+{
+  "name": "flight-service",
+  "version": "0.1.0",
+  "description": "AlbertAI-powered nationwide flight briefing service — weather, NOTAMs, SUA awareness via geolocation",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development node src/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
