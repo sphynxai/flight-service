@@ -1,0 +1,61 @@
+{
+  "_comment": "FAA Form 7233-4 field encoding. These formats are exact — a malformed flight plan is rejected by the filing service or, worse, accepted with the wrong meaning. Rules per AIM Appendix 4 / NBAA filing guide.",
+  "levels": [
+    { "ft": 4000,  "rules": "V", "expect": "A040", "why": "below FL180 is altitude in HUNDREDS with an A prefix" },
+    { "ft": 6500,  "rules": "V", "expect": "A065", "why": "VFR cruising altitude, still an A-code" },
+    { "ft": 500,   "rules": "V", "expect": "A005", "why": "must pad to three digits" },
+    { "ft": 17500, "rules": "V", "expect": "A175", "why": "just below the flight-level boundary" },
+    { "ft": 18000, "rules": "I", "expect": "F180", "why": "FL180 and above switches to an F-code" },
+    { "ft": 30000, "rules": "I", "expect": "F300", "why": "FL300" },
+    { "ft": 39000, "rules": "I", "expect": "F390", "why": "FL390" },
+    { "ft": 0,     "rules": "V", "expect": "VFR",  "why": "no altitude filed on a VFR plan is the literal string VFR" },
+    { "ft": null,  "rules": "I", "expect": null,   "why": "IFR with no level is incomplete, not a guess" }
+  ],
+  "speeds": [
+    { "kt": 110, "expect": "N0110", "why": "knots TAS, zero-padded to four digits" },
+    { "kt": 95,  "expect": "N0095", "why": "two-digit speed still pads to four" },
+    { "kt": 450, "expect": "N0450", "why": "jet cruise" },
+    { "kt": 0,   "expect": null,    "why": "zero is not a speed" },
+    { "kt": null,"expect": null,    "why": "absent stays absent" }
+  ],
+  "durations": [
+    { "min": 45,  "expect": "0045", "why": "HHMM, not minutes" },
+    { "min": 60,  "expect": "0100", "why": "exactly one hour" },
+    { "min": 95,  "expect": "0135", "why": "1 h 35 m" },
+    { "min": 605, "expect": "1005", "why": "10 h 05 m — hours also pad" },
+    { "min": 0,   "expect": "0000", "why": "zero is valid" },
+    { "min": -5,  "expect": null,   "why": "negative duration is not encodable" }
+  ],
+  "enroute": [
+    {
+      "input": { "distanceNm": 100, "tasKnots": 110, "windDir": null, "windSpeed": null, "trackDeg": null },
+      "expectMinutes": 55,
+      "expectGroundSpeed": 110,
+      "why": "no wind data: groundspeed is TAS"
+    },
+    {
+      "input": { "distanceNm": 100, "tasKnots": 110, "windDir": 360, "windSpeed": 20, "trackDeg": 360 },
+      "expectMinutes": 67,
+      "expectGroundSpeed": 90,
+      "why": "wind FROM dead ahead is a full 20 kt headwind"
+    },
+    {
+      "input": { "distanceNm": 100, "tasKnots": 110, "windDir": 180, "windSpeed": 20, "trackDeg": 360 },
+      "expectMinutes": 46,
+      "expectGroundSpeed": 130,
+      "why": "wind FROM behind is a full tailwind"
+    },
+    {
+      "input": { "distanceNm": 100, "tasKnots": 110, "windDir": 90, "windSpeed": 20, "trackDeg": 360 },
+      "expectMinutes": 55,
+      "expectGroundSpeed": 110,
+      "why": "pure crosswind contributes no along-track component"
+    },
+    {
+      "input": { "distanceNm": 100, "tasKnots": 20, "windDir": 360, "windSpeed": 30, "trackDeg": 360 },
+      "expectMinutes": null,
+      "expectGroundSpeed": null,
+      "why": "forecast headwind exceeds TAS — report nothing rather than a negative or absurd time"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
 import { fetchWindsAloft } from './winds-fetcher.js';
 import { fetchHazards, positionIsOnRoute, distanceNm } from './hazards-fetcher.js';
 import { buildVoiceBriefing } from './voice-briefing.js';
+import { buildFlightPlan, prefillFromBriefing } from './flight-plan.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -103,10 +104,17 @@ app.post('/api/briefing', async (req, res) => {
       altitude: altitude || null
     });
 
+    // Everything the briefing already knows, so the pilot types as little as
+    // possible on the flight plan. Preparation only — nothing is filed.
+    const flightPlanPrefill = prefillFromBriefing({
+      weather, winds, aircraft: aircraft || null, altitude: altitude || null
+    });
+
     res.json({
       status: 'ok',
       briefing,
       voice,
+      flightPlanPrefill,
       weather,
       routeWeather,
       winds,
@@ -130,6 +138,17 @@ app.post('/api/briefing', async (req, res) => {
     });
   } catch (err) {
     console.error('Briefing error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Validates and assembles an FAA Form 7233-4. This endpoint does NOT file:
+// filing requires Leidos Flight Service vendor authorization we do not hold.
+app.post('/api/flight-plan', (req, res) => {
+  try {
+    res.json({ status: 'ok', filed: false, ...buildFlightPlan(req.body || {}) });
+  } catch (err) {
+    console.error('Flight plan error:', err);
     res.status(500).json({ error: err.message });
   }
 });

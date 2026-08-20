@@ -25,7 +25,8 @@ function norm(?array $g): ?array {
 }
 
 $out = ['groups' => [], 'lines' => [], 'levels' => [], 'stations' => [],
-        'density' => [], 'gairmetAlt' => []];
+        'density' => [], 'gairmetAlt' => [],
+        'fpLevels' => [], 'fpSpeeds' => [], 'fpDurations' => [], 'fpEnroute' => []];
 
 foreach (fx('fb-groups.json')['cases'] as $c) {
     $out['groups'][] = norm(fb_parse_group($c['raw']));
@@ -56,6 +57,17 @@ foreach (fx('density-altitude.json')['cases'] as $c) {
 foreach (fx('gairmet-altitude.json')['cases'] as $c) {
     $a = gairmet_altitude($c['raw']);
     $out['gairmetAlt'][] = $a === null ? null : ['ft' => $a['ft'], 'label' => $a['label']];
+}
+
+$fp = fx('flight-plan-encoding.json');
+foreach ($fp['levels'] as $c)    $out['fpLevels'][]    = fp_encode_level($c['ft'], $c['rules']);
+foreach ($fp['speeds'] as $c)    $out['fpSpeeds'][]    = fp_encode_speed($c['kt']);
+foreach ($fp['durations'] as $c) $out['fpDurations'][] = fp_encode_duration($c['min']);
+foreach ($fp['enroute'] as $c) {
+    $i = $c['input'];
+    $r = fp_estimate_enroute($i['distanceNm'], $i['tasKnots'], $i['windDir'], $i['windSpeed'], $i['trackDeg']);
+    $out['fpEnroute'][] = $r === null ? null
+        : ['minutes' => $r['minutes'], 'groundSpeed' => $r['groundSpeed']];
 }
 
 // JSON_PRESERVE_ZERO_FRACTION keeps numeric types comparable with the JS side.

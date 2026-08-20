@@ -63,6 +63,7 @@ const lines = fx('fb-lines.json').cases;
 const levels = fx('levels.json').cases;
 const stations = fx('metar-stations.json').cases;
 const gairmetAlt = fx('gairmet-altitude.json').cases;
+const fpFx = fx('flight-plan-encoding.json');
 const densityFx = fx('density-altitude.json');
 const density = densityFx.cases;
 const DA_TOLERANCE = densityFx.toleranceFt ?? 30;
@@ -109,6 +110,23 @@ function verify(implName, impl) {
               c.expectDensityAltitude, DA_TOLERANCE, c.why);
   });
 
+  // Flight-plan encoding lives in the Node app only — the PHP demo host does
+  // not prepare flight plans, so there is nothing to compare against there.
+  if (impl.fpLevels) {
+    fpFx.levels.forEach((c, i) =>
+      check(`${implName}/fp-level`, `${c.ft} ft ${c.rules}`, impl.fpLevels[i], c.expect, c.why));
+    fpFx.speeds.forEach((c, i) =>
+      check(`${implName}/fp-speed`, `${c.kt} kt`, impl.fpSpeeds[i], c.expect, c.why));
+    fpFx.durations.forEach((c, i) =>
+      check(`${implName}/fp-duration`, `${c.min} min`, impl.fpDurations[i], c.expect, c.why));
+    fpFx.enroute.forEach((c, i) => {
+      const expected = c.expectMinutes === null
+        ? null
+        : { minutes: c.expectMinutes, groundSpeed: c.expectGroundSpeed };
+      check(`${implName}/fp-eet`, c.why.slice(0, 40), impl.fpEnroute[i], expected, c.why);
+    });
+  }
+
   // Ported to JS first; the PHP half is checked once api.php grows hazards.
   if (impl.gairmetAlt) {
     gairmetAlt.forEach((c, i) => {
@@ -131,7 +149,8 @@ if (php) verify('PHP', php);
 
 if (php) {
   // Only diff suites both implementations actually produce.
-  const shared = ['groups', 'lines', 'levels', 'stations', 'density', 'gairmetAlt']
+  const shared = ['groups', 'lines', 'levels', 'stations', 'density', 'gairmetAlt',
+                  'fpLevels', 'fpSpeeds', 'fpDurations', 'fpEnroute']
     .filter(k => Array.isArray(js[k]) && Array.isArray(php[k]));
 
   for (const key of shared) {
@@ -142,7 +161,11 @@ if (php) {
         levels: () => `${levels[i].altitude} ft`,
         stations: () => stations[i].icao,
         density: () => density[i].icao,
-        gairmetAlt: () => JSON.stringify(gairmetAlt[i].raw)
+        gairmetAlt: () => JSON.stringify(gairmetAlt[i].raw),
+        fpLevels: () => `${fpFx.levels[i].ft} ft`,
+        fpSpeeds: () => `${fpFx.speeds[i].kt} kt`,
+        fpDurations: () => `${fpFx.durations[i].min} min`,
+        fpEnroute: () => `eet case ${i + 1}`
       }[key]();
       check('JS<->PHP drift', `${key} ${label}`, php[key][i], v,
             'the two implementations disagree — one of them is wrong');

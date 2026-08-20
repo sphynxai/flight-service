@@ -224,6 +224,49 @@
     }
     .toggle-raw:hover { background: none; text-decoration: underline; }
 
+    .fp-wrap { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eee; }
+    .fp-notice {
+      font-size: 12.5px; line-height: 1.6; color: #8a6100;
+      background: #fff8e6; border: 1px solid #ffe08a;
+      border-radius: 6px; padding: 12px 14px; margin-bottom: 12px;
+    }
+    .fp-notice b { color: #6b4c00; }
+    .fp-derived {
+      font-size: 12px; color: #5a6472; background: #f4f7fb;
+      border-left: 3px solid #2a5298; border-radius: 0 4px 4px 0;
+      padding: 10px 12px; margin-bottom: 12px; line-height: 1.6;
+    }
+    .fp-derived:empty { display: none; }
+    .fp-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px 14px; margin-bottom: 14px;
+    }
+    .fp-grid label {
+      font-size: 11px; font-weight: 600; color: #6b7a90;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      display: flex; flex-direction: column; gap: 4px; margin: 0;
+    }
+    .fp-grid input, .fp-grid select {
+      font-size: 13px; padding: 8px 10px; text-transform: none;
+      font-weight: 400; color: #222; letter-spacing: 0;
+    }
+    .fp-full { grid-column: 1 / -1; }
+    .fp-errs {
+      font-size: 13px; background: #fdecea; border: 1px solid #f5c6c2;
+      border-left: 3px solid #c62828; border-radius: 0 4px 4px 0;
+      padding: 10px 12px; margin-top: 12px; color: #7f1d1a;
+    }
+    .fp-warns {
+      font-size: 13px; background: #fff8e6; border: 1px solid #ffe08a;
+      border-left: 3px solid #f9a825; border-radius: 0 4px 4px 0;
+      padding: 10px 12px; margin-top: 10px; color: #8a6100;
+    }
+    .fp-errs ul, .fp-warns ul { margin: 6px 0 0 18px; }
+    .fp-ok {
+      font-size: 13px; background: #edf7ee; border: 1px solid #b9dfbd;
+      border-left: 3px solid #2e7d32; border-radius: 0 4px 4px 0;
+      padding: 10px 12px; margin-top: 12px; color: #1b5e20;
+    }
     .opt { font-weight: 400; color: #8a93a0; font-size: 12px; }
     .loc-modes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     button.loc-mode {
@@ -368,6 +411,75 @@
       <div style="margin-top: 16px; text-align: center;">
         <button type="button" id="speakButton" style="background: #ff6b35;">🔊 Read Aloud</button>
       </div>
+
+      <div class="fp-wrap">
+        <button type="button" class="toggle-raw" id="toggleFp">File a flight plan ▾</button>
+        <div id="fpPanel" hidden>
+          <div class="fp-notice">
+            <b>Preparation only — this does not file.</b> A flight plan reaches the FAA
+            only through Leidos Flight Service, which requires vendor authorisation we
+            do not hold. This builds a complete, validated FAA Form 7233-4 for you to
+            review and file yourself.
+          </div>
+
+          <div class="fp-derived" id="fpDerived"></div>
+
+          <form id="fpForm" class="fp-grid">
+            <label>Item 7 — Aircraft ID
+              <input type="text" id="fpAircraftId" placeholder="N12345" maxlength="7"></label>
+            <label>Item 8 — Flight rules
+              <select id="fpRules">
+                <option value="V">V — VFR</option>
+                <option value="I">I — IFR</option>
+                <option value="Y">Y — IFR then VFR</option>
+                <option value="Z">Z — VFR then IFR</option>
+              </select></label>
+            <label>Item 8 — Type of flight
+              <select id="fpTypeOfFlight">
+                <option value="G">G — General aviation</option>
+                <option value="N">N — Non-scheduled</option>
+                <option value="S">S — Scheduled</option>
+                <option value="M">M — Military</option>
+                <option value="X">X — Other</option>
+              </select></label>
+            <label>Item 9 — Aircraft type
+              <input type="text" id="fpAircraftType" maxlength="4" placeholder="C172"></label>
+            <label>Item 9 — Wake category
+              <select id="fpWake">
+                <option value="L">L — Light (≤15,500 lb)</option>
+                <option value="M">M — Medium</option>
+                <option value="H">H — Heavy (≥300,000 lb)</option>
+              </select></label>
+            <label>Item 10 — Equipment
+              <input type="text" id="fpEquipment" placeholder="SG/C"></label>
+            <label>Item 13 — Departure
+              <input type="text" id="fpDeparture" maxlength="11"></label>
+            <label>Item 13 — Departure time (UTC)
+              <input type="text" id="fpDepTime" maxlength="4" placeholder="1830" inputmode="numeric"></label>
+            <label>Item 15 — Cruising speed (kt TAS)
+              <input type="text" id="fpSpeed" inputmode="numeric"></label>
+            <label>Item 15 — Route
+              <input type="text" id="fpRoute" placeholder="DCT"></label>
+            <label>Item 16 — Destination
+              <input type="text" id="fpDestination" maxlength="11"></label>
+            <label>Item 16 — Elapsed time (HHMM)
+              <input type="text" id="fpEet" maxlength="4" placeholder="0045" inputmode="numeric"></label>
+            <label>Item 19 — Endurance (HHMM)
+              <input type="text" id="fpEndurance" maxlength="4" placeholder="0400" inputmode="numeric"></label>
+            <label>Item 19 — Persons on board
+              <input type="text" id="fpPob" maxlength="3" placeholder="2"></label>
+            <label>Item 19 — Colour &amp; markings
+              <input type="text" id="fpColour" placeholder="WHITE/BLUE"></label>
+            <label>Item 19 — Pilot in command &amp; contact
+              <input type="text" id="fpPic" placeholder="J SMITH 555-0100"></label>
+            <label class="fp-full">Item 18 — Other information
+              <input type="text" id="fpOther" placeholder="0, or RMK/..."></label>
+          </form>
+
+          <button type="button" id="fpValidate">Validate flight plan</button>
+          <div id="fpResult"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -463,6 +575,7 @@
         // Display briefing
         document.getElementById('briefingText').textContent = data.briefing;
         lastVoice = data.voice || null;
+        applyPrefill(data.flightPlanPrefill);
         renderBriefing(data);
         document.getElementById('briefingArea').style.display = 'block';
         statusEl.innerHTML = '<span class="success">✓ Briefing ready</span>';
@@ -735,6 +848,96 @@
       const open = el.style.display !== 'none';
       el.style.display = open ? 'none' : 'block';
       e.target.textContent = open ? 'Show full briefing text ▾' : 'Hide full briefing text ▴';
+    });
+
+    // ---- flight plan (FAA Form 7233-4) ----------------------------------
+    // Preparation only. Filing requires Leidos vendor authorisation; the API
+    // returns filed:false and nothing is transmitted to the FAA.
+    // Rewritten by scripts/build-php.mjs for the PHP host, same as the
+    // briefing fetch target. Do not hand-edit the generated copy.
+    const fpPlanUrl = '/api/flight-plan';
+
+    document.getElementById('toggleFp').addEventListener('click', (e) => {
+      const p = document.getElementById('fpPanel');
+      const open = !p.hidden;
+      p.hidden = open;
+      e.target.textContent = open ? 'File a flight plan ▾' : 'Hide flight plan ▴';
+    });
+
+    function applyPrefill(pre) {
+      if (!pre) return;
+      const set = (id, v) => { if (v != null && v !== '') document.getElementById(id).value = v; };
+      set('fpDeparture', pre.departure);
+      set('fpDestination', pre.destination);
+      set('fpAircraftType', pre.aircraftType);
+      set('fpSpeed', pre.cruisingSpeed);
+      set('fpRoute', pre.route);
+      set('fpEet', pre.eet);
+      if (pre.wakeCategory) document.getElementById('fpWake').value = pre.wakeCategory;
+
+      const d = pre.derived || {};
+      const bits = [];
+      if (d.distanceNm != null) bits.push(`<b>${d.distanceNm} nm</b> great-circle`);
+      if (d.trackDeg != null) bits.push(`track <b>${String(d.trackDeg).padStart(3, '0')}°</b>`);
+      if (d.groundSpeed != null) {
+        const hw = d.headwindComponent;
+        const windNote = hw == null ? ''
+          : ` (${hw > 0 ? `${hw} kt headwind` : hw < 0 ? `${Math.abs(hw)} kt tailwind` : 'no along-track wind'})`;
+        bits.push(`groundspeed <b>${d.groundSpeed} kt</b>${windNote}`);
+      }
+      const el = document.getElementById('fpDerived');
+      el.innerHTML = bits.length
+        ? `Derived from your briefing: ${bits.join(' · ')}.<br>` +
+          `Elapsed time is an <b>estimate</b> using the forecast wind at your filed level` +
+          (d.tasSource ? `, and cruising speed is a ${esc(d.tasSource)}` : '') +
+          `. Confirm both before filing.`
+        : '';
+    }
+
+    document.getElementById('fpValidate').addEventListener('click', async () => {
+      const v = (id) => document.getElementById(id).value.trim();
+      const payload = {
+        aircraftId: v('fpAircraftId'), flightRules: v('fpRules'),
+        typeOfFlight: v('fpTypeOfFlight'), aircraftType: v('fpAircraftType'),
+        wakeCategory: v('fpWake'), equipment: v('fpEquipment'),
+        departure: v('fpDeparture'), departureTime: v('fpDepTime'),
+        cruisingSpeed: v('fpSpeed'), route: v('fpRoute'),
+        altitude: document.getElementById('altitude').value.trim(),
+        destination: v('fpDestination'), eet: v('fpEet'),
+        endurance: v('fpEndurance'), personsOnBoard: v('fpPob'),
+        aircraftColour: v('fpColour'), pilotInCommand: v('fpPic'),
+        otherInformation: v('fpOther')
+      };
+
+      const out = document.getElementById('fpResult');
+      out.innerHTML = '<div class="status">Validating…</div>';
+
+      try {
+        const r = await fetch(fpPlanUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+
+        let html = '';
+        if (d.errors?.length) {
+          html += `<div class="fp-errs"><b>Not ready to file — ${d.errors.length} problem${d.errors.length > 1 ? 's' : ''}:</b><ul>` +
+            d.errors.map(e => `<li>${esc(e)}</li>`).join('') + '</ul></div>';
+        }
+        if (d.warnings?.length) {
+          html += `<div class="fp-warns"><b>Check before filing:</b><ul>` +
+            d.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul></div>';
+        }
+        if (d.ready) {
+          html += `<div class="fp-ok"><b>Complete and valid.</b> Not filed — copy this into ` +
+            `1800wxbrief.com, ForeFlight, Garmin Pilot, or read it to a briefer.</div>` +
+            `<div class="raw" style="margin-top:10px;">${esc(d.icao)}</div>`;
+        }
+        out.innerHTML = html;
+      } catch (err) {
+        out.innerHTML = `<div class="fp-errs">Could not validate: ${esc(err.message)}</div>`;
+      }
     });
 
     // ---- voice ----------------------------------------------------------

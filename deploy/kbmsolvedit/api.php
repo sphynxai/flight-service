@@ -1015,6 +1015,233 @@ function build_voice_briefing(array $d): string {
     return implode(' ', $lines);
 }
 
+// ------------------------------------------------------- flight plan ------
+// FAA Form 7233-4 preparation. Mirror of src/flight-plan.js.
+//
+// ‼️ NOTHING HERE FILES A FLIGHT PLAN. Filing reaches the FAA only through
+// Leidos Flight Service, whose /rest/FP/file endpoint is gated behind Service
+// Provider Authorization we do not hold. This produces a complete, validated
+// plan for the pilot to review and file themselves.
+
+/** Below FL180 is altitude in HUNDREDS (A040); FL180+ is a flight level (F300). */
+function fp_encode_level($ft, string $rules = 'V'): ?string {
+    if ($ft === null || !is_numeric($ft) || (float)$ft <= 0) return $rules === 'V' ? 'VFR' : null;
+    $n = (float)$ft;
+    $h = (int)round($n / 100);
+    return ($n >= 18000 ? 'F' : 'A') . str_pad((string)$h, 3, '0', STR_PAD_LEFT);
+}
+
+function fp_encode_speed($kt): ?string {
+    if ($kt === null || !is_numeric($kt)) return null;
+    $n = (int)round((float)$kt);
+    if ($n <= 0) return null;
+    return 'N' . str_pad((string)$n, 4, '0', STR_PAD_LEFT);
+}
+
+function fp_encode_duration($minutes): ?string {
+    if ($minutes === null || !is_numeric($minutes)) return null;
+    $m = (int)round((float)$minutes);
+    if ($m < 0) return null;
+    return str_pad((string)intdiv($m, 60), 2, '0', STR_PAD_LEFT)
+         . str_pad((string)($m % 60), 2, '0', STR_PAD_LEFT);
+}
+
+function fp_great_circle_nm(?array $a, ?array $b): ?float {
+    return distance_nm($a, $b);
+}
+
+function fp_course_deg(?array $a, ?array $b): ?float {
+    foreach ([$a, $b] as $p) {
+        if (!$p || !is_numeric($p['lat'] ?? null) || !is_numeric($p['lon'] ?? null)) return null;
+    }
+    return fmod(rad2deg(bearing_rad($a, $b)) + 360, 360);
+}
+
+/**
+ * Groundspeed = TAS minus the along-track wind component. The standard planning
+ * shortcut; it ignores the small crosswind drift term. An ESTIMATE, labelled.
+ */
+function fp_estimate_enroute($distanceNm, $tas, $windDir, $windSpeed, $trackDeg): ?array {
+    if (!is_numeric($distanceNm) || !is_numeric($tas) || (float)$tas <= 0) return null;
+
+    $gs = (float)$tas;
+    $head = null;
+    if (is_numeric($windDir) && is_numeric($windSpeed) && is_numeric($trackDeg)) {
+        $head = (float)$windSpeed * cos(deg2rad((float)$windDir - (float)$trackDeg));
+        $gs = (float)$tas - $head;
+    }
+    // A forecast headwind at or above TAS means it is not flyable as filed.
+    if ($gs <= 5) return null;
+
+    return [
+        'minutes' => (int)round(((float)$distanceNm / $gs) * 60),
+        'groundSpeed' => (int)round($gs),
+        'headwindComponent' => $head === null ? null : (int)round($head),
+    ];
+}
+
+// Wake category is set by max certificated take-off mass (FAA Order 7360.1):
+// L <= 15,500 lb, M < 300,000 lb, H >= 300,000 lb. Only unambiguous common
+// types are pre-filled; anything else is left to the pilot rather than guessed.
+const FP_WAKE = [
+    'C172'=>'L','C152'=>'L','C182'=>'L','C206'=>'L','C210'=>'L','PA28'=>'L','PA32'=>'L',
+    'PA44'=>'L','BE33'=>'L','BE35'=>'L','BE36'=>'L','SR20'=>'L','SR22'=>'L','DA40'=>'L',
+    'DA42'=>'L','M20P'=>'L','C72R'=>'L','PC12'=>'L',
+    'BE20'=>'M','C25A'=>'M','C56X'=>'M','E55P'=>'M','B738'=>'M','A320'=>'M','E170'=>'M','CRJ2'=>'M',
+    'B744'=>'H','B748'=>'H','B77W'=>'H','A388'=>'H','B763'=>'H','A333'=>'H',
+];
+const FP_TAS = [
+    'C172'=>110,'C152'=>95,'C182'=>140,'C206'=>145,'PA28'=>115,'SR20'=>155,'SR22'=>180,
+    'DA40'=>150,'BE36'=>170,'M20P'=>165,'BE20'=>270,'PC12'=>270,'C25A'=>400,
+    'B738'=>450,'A320'=>450,'CRJ2'=>420,'B744'=>490,
+];
+
+function fp_prefill(array $weather, array $winds, ?string $aircraft, $altitude): array {
+    $dep = $weather['departure'] ?? [];
+    $arr = $weather['arrival'] ?? [];
+    $type = $aircraft ? strtoupper($aircraft) : null;
+
+    $from = ['lat' => $dep['metar']['lat'] ?? null, 'lon' => $dep['metar']['lon'] ?? null];
+    $to   = ['lat' => $arr['metar']['lat'] ?? null, 'lon' => $arr['metar']['lon'] ?? null];
+
+    $dist  = fp_great_circle_nm($from, $to);
+    $track = fp_course_deg($from, $to);
+    $tas   = $type && isset(FP_TAS[$type]) ? FP_TAS[$type] : null;
+
+    $w = !empty($winds['departure']['available']) ? $winds['departure'] : ($winds['arrival'] ?? null);
+    $useWind = !empty($w['available']) && empty($w['lightVariable']);
+
+    $est = ($dist !== null && $tas)
+        ? fp_estimate_enroute($dist, $tas, $useWind ? $w['dir'] : null,
+                              $useWind ? $w['speed'] : null, $track)
+        : null;
+
+    return [
+        'departure' => $dep['airport'] ?? null,
+        'destination' => $arr['airport'] ?? null,
+        'aircraftType' => $type,
+        'wakeCategory' => $type && isset(FP_WAKE[$type]) ? FP_WAKE[$type] : null,
+        'altitude' => $altitude ?: null,
+        'cruisingSpeed' => $tas,
+        'route' => 'DCT',
+        'eet' => $est ? fp_encode_duration($est['minutes']) : null,
+        'derived' => [
+            'distanceNm' => $dist === null ? null : (int)round($dist),
+            'trackDeg' => $track === null ? null : (int)round($track),
+            'groundSpeed' => $est['groundSpeed'] ?? null,
+            'headwindComponent' => $est['headwindComponent'] ?? null,
+            'tasSource' => $tas ? 'typical cruise for type — confirm against your aircraft' : null,
+        ],
+    ];
+}
+
+function fp_build(array $f): array {
+    $errors = []; $warnings = [];
+    $g = fn($k) => trim((string)($f[$k] ?? ''));
+
+    $rules = strtoupper($g('flightRules') ?: 'V');
+    $typeOfFlight = strtoupper($g('typeOfFlight') ?: 'G');
+
+    $required = [
+        'aircraftId' => 'Item 7 — aircraft identification',
+        'flightRules' => 'Item 8 — flight rules',
+        'typeOfFlight' => 'Item 8 — type of flight',
+        'aircraftType' => 'Item 9 — type of aircraft',
+        'wakeCategory' => 'Item 9 — wake turbulence category',
+        'equipment' => 'Item 10 — equipment and capabilities',
+        'departure' => 'Item 13 — departure aerodrome',
+        'departureTime' => 'Item 13 — proposed departure time (UTC)',
+        'cruisingSpeed' => 'Item 15 — cruising speed',
+        'destination' => 'Item 16 — destination aerodrome',
+        'eet' => 'Item 16 — total estimated elapsed time',
+        'endurance' => 'Item 19 — fuel endurance',
+        'personsOnBoard' => 'Item 19 — persons on board',
+        'aircraftColour' => 'Item 19 — aircraft colour and markings',
+        'pilotInCommand' => 'Item 19 — pilot in command and contact',
+    ];
+    foreach ($required as $k => $label) {
+        $v = $f[$k] ?? null;
+        if ($v === null || trim((string)$v) === '') $errors[] = "Missing $label.";
+    }
+
+    if ($g('aircraftId') && !preg_match('/^[A-Z0-9]{2,7}$/', strtoupper($g('aircraftId')))) {
+        $errors[] = 'Item 7 — aircraft identification must be 2–7 letters or digits, no hyphen (N123AB).';
+    }
+    if ($rules && !in_array($rules, ['I','V','Y','Z'], true)) {
+        $errors[] = 'Item 8 — flight rules must be I, V, Y or Z.';
+    }
+    if ($typeOfFlight && !in_array($typeOfFlight, ['S','N','G','M','X'], true)) {
+        $errors[] = 'Item 8 — type of flight must be S, N, G, M or X.';
+    }
+    if ($g('aircraftType') && !preg_match('/^[A-Z0-9]{2,4}$/', strtoupper($g('aircraftType')))) {
+        $errors[] = 'Item 9 — aircraft type must be the 2–4 character ICAO designator (C172).';
+    }
+    if ($g('wakeCategory') && !in_array(strtoupper($g('wakeCategory')), ['L','M','H','J'], true)) {
+        $errors[] = 'Item 9 — wake category must be L, M, H or J.';
+    }
+    if ($g('departureTime') && !preg_match('/^([01]\d|2[0-3])[0-5]\d$/', $g('departureTime'))) {
+        $errors[] = 'Item 13 — departure time must be 4-digit UTC, 0000–2359.';
+    }
+    if ($g('eet') && !preg_match('/^\d{2}[0-5]\d$/', $g('eet'))) {
+        $errors[] = 'Item 16 — estimated elapsed time must be HHMM.';
+    }
+    if ($g('endurance') && !preg_match('/^\d{2}[0-5]\d$/', $g('endurance'))) {
+        $errors[] = 'Item 19 — endurance must be HHMM.';
+    }
+    if ($g('personsOnBoard') && !preg_match('/^(\d{1,3}|TBN)$/', strtoupper($g('personsOnBoard')))) {
+        $errors[] = 'Item 19 — persons on board must be a number, or TBN if not yet known.';
+    }
+
+    // Endurance below elapsed time is a fuel-planning problem, not a format one.
+    if (preg_match('/^\d{4}$/', $g('eet')) && preg_match('/^\d{4}$/', $g('endurance'))) {
+        $mins = fn($s) => (int)substr($s, 0, 2) * 60 + (int)substr($s, 2);
+        if ($mins($g('endurance')) <= $mins($g('eet'))) {
+            $warnings[] = 'Item 19 — endurance does not exceed estimated elapsed time. Check fuel reserves.';
+        }
+    }
+
+    $speed = fp_encode_speed($f['cruisingSpeed'] ?? null);
+    $level = fp_encode_level($f['altitude'] ?? null, $rules);
+    if ($g('cruisingSpeed') && !$speed) $errors[] = 'Item 15 — cruising speed must be knots TAS.';
+
+    $route = strtoupper($g('route')) ?: 'DCT';
+    $item18 = $g('otherInformation') ?: '0';
+    $item15 = implode(' ', array_filter([$speed, $level, $route]));
+    $item19 = 'E/' . $g('endurance')
+            . ' P/' . strtoupper($g('personsOnBoard'))
+            . ' A/' . strtoupper($g('aircraftColour'))
+            . ' C/' . strtoupper($g('pilotInCommand'));
+
+    $icao = '(FPL-' . strtoupper($g('aircraftId')) . '-' . $rules . $typeOfFlight . "\n"
+          . '-' . strtoupper($g('aircraftType')) . '/' . strtoupper($g('wakeCategory'))
+          . '-' . strtoupper($g('equipment')) . "\n"
+          . '-' . strtoupper($g('departure')) . $g('departureTime') . "\n"
+          . '-' . $item15 . "\n"
+          . '-' . strtoupper($g('destination')) . $g('eet') . "\n"
+          . '-' . $item18 . "\n"
+          . '-' . $item19 . ')';
+
+    return [
+        'ready' => !$errors,
+        'errors' => $errors,
+        'warnings' => $warnings,
+        'encoded' => ['item15' => $item15, 'item18' => $item18, 'item19' => $item19,
+                      'speed' => $speed, 'level' => $level],
+        'icao' => $icao,
+        // Shape matching Leidos /rest/FP/file, for when vendor authorization
+        // exists. Not sent anywhere today.
+        'leidos' => [
+            'type' => 'ICAO',
+            'flightRules' => $rules === 'I' ? 'IFR' : 'VFR',
+            'aircraftIdentifier' => strtoupper($g('aircraftId')),
+            'departure' => strtoupper($g('departure')),
+            'destination' => strtoupper($g('destination')),
+            'departureInstant' => $g('departureTime') ?: null,
+            'flightDuration' => $g('eet') ?: null,
+        ],
+    ];
+}
+
 // ---------------------------------------------------------------- request ---
 
 // Under CLI this file is being included by the conformance tests, which need
@@ -1027,6 +1254,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 $body = json_decode(file_get_contents('php://input') ?: '', true);
 if (!is_array($body)) fail(400, 'invalid JSON body');
+
+// Flight plan preparation shares this endpoint (?action=flight-plan) because the
+// shared host serves one file. It validates and assembles; it does NOT file.
+if (($_GET['action'] ?? '') === 'flight-plan') {
+    echo json_encode(array_merge(['status' => 'ok', 'filed' => false], fp_build($body)),
+                     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
 
 $dep = strtoupper(trim((string)($body['departure'] ?? '')));
 $arr = strtoupper(trim((string)($body['arrival'] ?? '')));
@@ -1150,6 +1385,9 @@ echo json_encode([
     'status'    => 'ok',
     'briefing'  => $briefing,
     'voice'     => $voice,
+    // Everything the briefing already knows, so the pilot types as little as
+    // possible on the flight plan. Preparation only — nothing is filed.
+    'flightPlanPrefill' => fp_prefill($weather, $winds, $aircraft ?: null, $altitude ?: null),
     'weather'   => $weather,
     'winds'     => $winds,
     'hazards'   => $hazards,
