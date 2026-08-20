@@ -168,6 +168,111 @@ export async function fetchTAF(airport) {
   }
 }
 
+const EARTH_NM = 3440.065;
+const rad = (d) => (d * Math.PI) / 180;
+
+/**
+ * Perpendicular distance in nm from a point to the great-circle track between
+ * two points.
+ *
+ * A bounding box is not a corridor: the box around KDFW-KMSP spans Texas to
+ * Minnesota, so Shreveport and Brownwood fall inside it while being hundreds of
+ * miles off the route. The box is the cheap server-side query; this is what
+ * makes "enroute" actually mean enroute.
+ */
+export function crossTrackNm(from, to, point) {
+  const vals = [from?.lat, from?.lon, to?.lat, to?.lon, point?.lat, point?.lon];
+  if (vals.some(v => v == null || !Number.isFinite(Number(v)))) return null;
+
+  const d13 = angularDistance(from, point);
+  const brg13 = bearing(from, point);
+  const brg12 = bearing(from, to);
+
+  const xt = Math.asin(Math.sin(d13) * Math.sin(brg13 - brg12)) * EARTH_NM;
+  return Math.abs(xt);
+}
+
+function angularDistance(a, b) {
+  const dLat = rad(Number(b.lat) - Number(a.lat));
+  const dLon = rad(Number(b.lon) - Number(a.lon));
+  const la1 = rad(Number(a.lat)), la2 = rad(Number(b.lat));
+  const h = Math.sin(dLat / 2) ** 2 +
+            Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function bearing(a, b) {
+  const la1 = rad(Number(a.lat)), la2 = rad(Number(b.lat));
+  const dLon = rad(Number(b.lon) - Number(a.lon));
+  const y = Math.sin(dLon) * Math.cos(la2);
+  const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLon);
+  return Math.atan2(y, x);
+}
+
+/**
+ * Enroute stations inside the route corridor.
+ *
+ * Mike's checklist calls for weather along the route, not just the endpoints —
+ * Garmin pulls ~13 stations on a 50 nm corridor. Ordering puts anything below
+ * VFR first, because a single IFR field mid-route matters more than a dozen
+ * clear ones, and the list is capped for readability.
+ */
+export async function fetchRouteMetars(bounds, exclude = [], limit = 12, route = null, corridorNm = 50) {
+  if (!bounds) return { available: false, reason: 'no route corridor', stations: [], total: 0 };
+
+  const bbox = [
+    bounds.minLat.toFixed(3), bounds.minLon.toFixed(3),
+    bounds.maxLat.toFixed(3), bounds.maxLon.toFixed(3)
+  ].join(',');
+
+  try {
+    const url = `${NOAA_API_BASE}/metar?bbox=${bbox}&format=json`;
+    const response = await getWithRetry(url, 12000);
+    const rows = Array.isArray(response.data) ? response.data : [];
+
+    const skip = new Set(exclude.map(s => String(s || '').toUpperCase()));
+    const rank = { LIFR: 0, IFR: 1, MVFR: 2, VFR: 3 };
+
+    const stations = rows
+      .filter(r => r?.rawOb && !skip.has(String(r.icaoId || '').toUpperCase()))
+      .map(r => ({
+        icao: r.icaoId || null,
+        name: r.name || null,
+        fltCat: r.fltCat || null,
+        visib: r.visib ?? null,
+        wxString: r.wxString || null,
+        offRouteNm: route
+          ? crossTrackNm(route.from, route.to, { lat: r.lat, lon: r.lon })
+          : null,
+        raw: r.rawOb
+      }))
+      // Narrow the bbox result to an actual corridor. Stations with unknown
+      // geometry are kept rather than silently dropped.
+      .filter(s => s.offRouteNm == null || s.offRouteNm <= corridorNm)
+      // Below-VFR first — one IFR field mid-route matters more than a dozen
+      // clear ones — then by proximity to the track.
+      .sort((a, b) => {
+        const d = (rank[a.fltCat] ?? 4) - (rank[b.fltCat] ?? 4);
+        if (d !== 0) return d;
+        return (a.offRouteNm ?? 1e9) - (b.offRouteNm ?? 1e9);
+      });
+
+    const belowVfr = stations.filter(s => s.fltCat && s.fltCat !== 'VFR').length;
+
+    return {
+      available: true,
+      corridorNm,
+      total: stations.length,
+      belowVfr,
+      stations: stations.slice(0, limit)
+    };
+  } catch (err) {
+    console.error('Route METAR fetch failed:', err.message);
+    // Must not read as "no stations out there".
+    return { available: false, reason: 'route weather lookup failed', stations: [], total: 0 };
+  }
+}
+
 export async function getWeatherBriefing(departure, arrival) {
   const [depMetar, arrMetar, depTaf, arrTaf] = await Promise.all([
     fetchMETAR(departure),

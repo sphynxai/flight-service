@@ -522,7 +522,8 @@ function describe_hazards(?array $h): string {
                  . ' — ' . ($p['raw'] ?? $p['acType'] ?? ''));
     }
     if (count($pireps) > 6) {
-        $lines[] = '  …and ' . (count($pireps) - 6) . ' more pilot reports on route.';
+        $n = count($pireps) - 6;
+        $lines[] = '  …and ' . $n . ' more pilot report' . ($n > 1 ? 's' : '') . ' on route.';
     }
 
     if (!$lines) {
@@ -533,6 +534,134 @@ function describe_hazards(?array $h): string {
     }
 
     return implode("\n", $lines);
+}
+
+// ------------------------------------------------------ enroute stations ---
+
+const EARTH_NM = 3440.065;
+
+function ang_dist(array $a, array $b): float {
+    $dLat = deg2rad((float)$b['lat'] - (float)$a['lat']);
+    $dLon = deg2rad((float)$b['lon'] - (float)$a['lon']);
+    $la1 = deg2rad((float)$a['lat']); $la2 = deg2rad((float)$b['lat']);
+    $h = sin($dLat / 2) ** 2 + cos($la1) * cos($la2) * sin($dLon / 2) ** 2;
+    return 2 * asin(min(1, sqrt($h)));
+}
+
+function bearing_rad(array $a, array $b): float {
+    $la1 = deg2rad((float)$a['lat']); $la2 = deg2rad((float)$b['lat']);
+    $dLon = deg2rad((float)$b['lon'] - (float)$a['lon']);
+    $y = sin($dLon) * cos($la2);
+    $x = cos($la1) * sin($la2) - sin($la1) * cos($la2) * cos($dLon);
+    return atan2($y, $x);
+}
+
+/**
+ * Perpendicular distance in nm from a point to the great-circle track.
+ * A bounding box is not a corridor — the KDFW-KMSP box spans Texas to
+ * Minnesota, so Shreveport falls inside it while being far off route.
+ */
+function cross_track_nm(?array $from, ?array $to, ?array $p): ?float {
+    foreach ([$from, $to, $p] as $x) {
+        if (!$x || !is_numeric($x['lat'] ?? null) || !is_numeric($x['lon'] ?? null)) return null;
+    }
+    $xt = asin(sin(ang_dist($from, $p)) * sin(bearing_rad($from, $p) - bearing_rad($from, $to))) * EARTH_NM;
+    return abs($xt);
+}
+
+function fetch_route_metars(?array $bounds, array $exclude, ?array $route,
+                            int $limit = 12, float $corridorNm = 50): array {
+    if (!$bounds) {
+        return ['available' => false, 'reason' => 'no route corridor', 'stations' => [], 'total' => 0];
+    }
+
+    $bbox = implode(',', [
+        number_format($bounds['minLat'], 3, '.', ''), number_format($bounds['minLon'], 3, '.', ''),
+        number_format($bounds['maxLat'], 3, '.', ''), number_format($bounds['maxLon'], 3, '.', ''),
+    ]);
+
+    $res = fetch_all(['m' => NOAA_API . '/metar?bbox=' . urlencode($bbox) . '&format=json']);
+    if ($res['m'] === null) {
+        // Must not read as "no stations out there".
+        return ['available' => false, 'reason' => 'route weather lookup failed',
+                'stations' => [], 'total' => 0];
+    }
+
+    $rows = json_decode($res['m'], true);
+    if (!is_array($rows)) {
+        return ['available' => false, 'reason' => 'route weather lookup failed',
+                'stations' => [], 'total' => 0];
+    }
+
+    $skip = array_flip(array_map('strtoupper', $exclude));
+    $rank = ['LIFR' => 0, 'IFR' => 1, 'MVFR' => 2, 'VFR' => 3];
+
+    $stations = [];
+    foreach ($rows as $r) {
+        if (empty($r['rawOb'])) continue;
+        if (isset($skip[strtoupper((string)($r['icaoId'] ?? ''))])) continue;
+
+        $off = $route
+            ? cross_track_nm($route['from'], $route['to'],
+                             ['lat' => $r['lat'] ?? null, 'lon' => $r['lon'] ?? null])
+            : null;
+        // Unknown geometry is kept rather than silently dropped.
+        if ($off !== null && $off > $corridorNm) continue;
+
+        $stations[] = [
+            'icao' => $r['icaoId'] ?? null,
+            'fltCat' => $r['fltCat'] ?? null,
+            'visib' => $r['visib'] ?? null,
+            'wxString' => $r['wxString'] ?? null,
+            'offRouteNm' => $off,
+            'raw' => $r['rawOb'],
+        ];
+    }
+
+    usort($stations, function ($a, $b) use ($rank) {
+        $d = ($rank[$a['fltCat']] ?? 4) <=> ($rank[$b['fltCat']] ?? 4);
+        if ($d !== 0) return $d;
+        return ($a['offRouteNm'] ?? 1e9) <=> ($b['offRouteNm'] ?? 1e9);
+    });
+
+    $belowVfr = 0;
+    foreach ($stations as $s) {
+        if ($s['fltCat'] && $s['fltCat'] !== 'VFR') $belowVfr++;
+    }
+
+    return [
+        'available' => true,
+        'corridorNm' => $corridorNm,
+        'total' => count($stations),
+        'belowVfr' => $belowVfr,
+        'stations' => array_slice($stations, 0, $limit),
+    ];
+}
+
+function describe_route_weather(?array $rw): string {
+    if (!$rw || empty($rw['available'])) {
+        return 'Enroute stations not checked (' . ($rw['reason'] ?? 'no data') . ')';
+    }
+    if (!$rw['stations']) return 'No reporting stations found inside the route corridor.';
+
+    $within = ' within ' . (int)$rw['corridorNm'] . 'nm of track';
+    $head = $rw['belowVfr']
+        ? "{$rw['belowVfr']} of {$rw['total']} stations$within reporting below VFR:"
+        : "All {$rw['total']} stations$within reporting VFR:";
+
+    $rows = [];
+    foreach ($rw['stations'] as $s) {
+        $bits = [$s['fltCat'] ?: '—'];
+        if ($s['visib'] !== null) $bits[] = $s['visib'] . 'SM';
+        if ($s['wxString']) $bits[] = $s['wxString'];
+        if ($s['offRouteNm'] !== null) $bits[] = round($s['offRouteNm']) . 'nm off track';
+        $rows[] = '  ' . str_pad((string)$s['icao'], 5) . ' ' . implode(' · ', $bits);
+    }
+    if ($rw['total'] > count($rw['stations'])) {
+        $rows[] = '  …' . ($rw['total'] - count($rw['stations'])) . ' further stations in corridor.';
+    }
+
+    return implode("\n", array_merge([$head], $rows));
 }
 
 function metar_from(?string $json, string $icao): ?array {
@@ -707,10 +836,20 @@ $cats = array_values(array_filter([
 $head = "BRIEFING: $dep to $arr at " . ($altitude ?: 'VFR') . ($aircraft ? " — $aircraft" : '');
 
 // No go/no-go verdict: this service has no basis to issue one.
+// Reuse the hazard corridor so enroute weather and hazards describe the same
+// piece of sky.
+$routeWeather = fetch_route_metars($hazards['bounds'] ?? null, [$dep, $arr], [
+    'from' => ['lat' => $weather['departure']['metar']['lat'] ?? null,
+               'lon' => $weather['departure']['metar']['lon'] ?? null],
+    'to'   => ['lat' => $weather['arrival']['metar']['lat'] ?? null,
+               'lon' => $weather['arrival']['metar']['lon'] ?? null],
+]);
+
 $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "\n\nWEATHER:\n"
     . describe_station('Departure', $dep, $weather['departure']['metar'], $weather['departure']['taf']) . "\n\n"
     . describe_station('Arrival', $arr, $weather['arrival']['metar'], $weather['arrival']['taf'])
+    . "\n\nENROUTE STATIONS:\n" . describe_route_weather($routeWeather)
     . "\n\nWINDS ALOFT:\n"
     . describe_winds("Departure ($dep)", $winds['departure']) . "\n"
     . describe_winds("Arrival ($arr)", $winds['arrival'])
@@ -728,6 +867,7 @@ echo json_encode([
     'weather'   => $weather,
     'winds'     => $winds,
     'hazards'   => $hazards,
+    'routeWeather' => $routeWeather,
     'notams'    => $notams,
     'sua'       => $sua,
     'aircraft'  => $aircraft ?: null,

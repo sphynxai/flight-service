@@ -2,7 +2,7 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config } from 'dotenv';
-import { getWeatherBriefing } from './weather-fetcher.js';
+import { getWeatherBriefing, fetchRouteMetars } from './weather-fetcher.js';
 import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
 import { fetchWindsAloft } from './winds-fetcher.js';
 import { fetchHazards } from './hazards-fetcher.js';
@@ -55,6 +55,18 @@ app.post('/api/briefing', async (req, res) => {
       { lat: latitude, lon: longitude }
     ]);
 
+    // Reuse the hazard corridor so enroute weather and hazards describe the
+    // same piece of sky.
+    const routeWeather = await fetchRouteMetars(
+      hazards.bounds,
+      [dep, arr],
+      12,
+      {
+        from: { lat: weather.departure?.metar?.lat, lon: weather.departure?.metar?.lon },
+        to: { lat: weather.arrival?.metar?.lat, lon: weather.arrival?.metar?.lon }
+      }
+    );
+
     // Synthesize briefing via AlbertAI
     const briefing = await generateBriefing({
       departure: dep,
@@ -64,6 +76,7 @@ app.post('/api/briefing', async (req, res) => {
       latitude,
       longitude,
       weather: JSON.stringify(weather),
+      routeWeather: JSON.stringify(routeWeather),
       winds: JSON.stringify(winds),
       hazards: JSON.stringify(hazards),
       notams: JSON.stringify(notams),
@@ -74,6 +87,7 @@ app.post('/api/briefing', async (req, res) => {
       status: 'ok',
       briefing,
       weather,
+      routeWeather,
       winds,
       hazards,
       notams,

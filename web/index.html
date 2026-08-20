@@ -533,6 +533,38 @@
           ${stationCard('Arrival', w.arrival?.airport || '—', w.arrival?.metar, w.arrival?.taf)}
         </div>
 
+        ${(() => {
+          const rw = data.routeWeather;
+          if (!rw) return '';
+          let body;
+          if (!rw.available) {
+            body = `<div class="notam-item">Enroute stations not checked ` +
+                   `<span style="color:#8a93a0;">(${esc(rw.reason || 'no data')})</span></div>`;
+          } else if (!rw.stations.length) {
+            body = `<div class="notam-item">No reporting stations inside the route corridor.</div>`;
+          } else {
+            const rows = rw.stations.map(s => {
+              const bits = [];
+              if (s.visib != null) bits.push(`${s.visib} SM`);
+              if (s.wxString) bits.push(s.wxString);
+              if (s.offRouteNm != null) bits.push(`${Math.round(s.offRouteNm)} nm off track`);
+              const cat = s.fltCat || 'NA';
+              return `<div class="notam-item" style="display:flex;gap:10px;align-items:center;">` +
+                `<span class="cat cat-${esc(cat)}">${esc(cat)}</span>` +
+                `<span class="notam-airport">${esc(s.icao || '')}</span>` +
+                `<span style="color:#5a6472;">${esc(bits.join(' · '))}</span></div>`;
+            }).join('');
+            const extra = rw.total > rw.stations.length
+              ? `<div class="notam-item" style="color:#8a93a0;">…${rw.total - rw.stations.length} further stations in corridor.</div>`
+              : '';
+            body = rows + extra;
+          }
+          const label = rw.available && rw.belowVfr
+            ? `Enroute stations — ${rw.belowVfr} below VFR`
+            : 'Enroute stations';
+          return `<div class="section"><div class="section-title">${esc(label)}</div>${body}</div>`;
+        })()}
+
         <div class="section">
           <div class="section-title">Winds &amp; temps aloft</div>
           ${windCard('Departure', winds.departure)}

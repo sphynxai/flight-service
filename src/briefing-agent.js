@@ -14,6 +14,7 @@ export async function generateBriefing({
   latitude,
   longitude,
   weather,
+  routeWeather,
   winds,
   hazards,
   notams,
@@ -21,7 +22,7 @@ export async function generateBriefing({
 }) {
   if (!ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY not configured; returning structured fallback');
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua });
   }
 
   const prompt = `You are a flight briefing specialist. Provide a concise, pilot-friendly preflight briefing for:
@@ -84,7 +85,7 @@ Keep the entire briefing under 400 words (about 2 minutes of speech time).`;
     return response.data.content[0].text;
   } catch (err) {
     console.error('AlbertAI API error:', err.message);
-    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua });
+    return fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua });
   }
 }
 
@@ -157,7 +158,8 @@ export function describeHazards(h) {
     lines.push(`• ${p.urgent ? 'URGENT PIREP' : 'PIREP'}${fl} — ${p.raw || p.acType || ''}`.trimEnd());
   }
   if (pireps.length > 6) {
-    lines.push(`  …and ${pireps.length - 6} more pilot reports on route.`);
+    const n = pireps.length - 6;
+    lines.push(`  …and ${n} more pilot report${n > 1 ? 's' : ''} on route.`);
   }
 
   if (!lines.length) {
@@ -169,6 +171,34 @@ export function describeHazards(h) {
   }
 
   return lines.join('\n');
+}
+
+export function describeRouteWeather(rw) {
+  if (!rw || !rw.available) {
+    return `Enroute stations not checked (${rw?.reason || 'no data'})`;
+  }
+  if (!rw.stations.length) {
+    return 'No reporting stations found inside the route corridor.';
+  }
+
+  const within = rw.corridorNm ? ` within ${rw.corridorNm}nm of track` : '';
+  const head = rw.belowVfr
+    ? `${rw.belowVfr} of ${rw.total} stations${within} reporting below VFR:`
+    : `All ${rw.total} stations${within} reporting VFR:`;
+
+  const rows = rw.stations.map(s => {
+    const bits = [s.fltCat || '—'];
+    if (s.visib != null) bits.push(`${s.visib}SM`);
+    if (s.wxString) bits.push(s.wxString);
+    if (s.offRouteNm != null) bits.push(`${Math.round(s.offRouteNm)}nm off track`);
+    return `  ${String(s.icao || '').padEnd(5)} ${bits.join(' · ')}`;
+  });
+
+  if (rw.total > rw.stations.length) {
+    rows.push(`  …${rw.total - rw.stations.length} further stations in corridor.`);
+  }
+
+  return [head, ...rows].join('\n');
 }
 
 function describeWinds(label, w) {
@@ -231,11 +261,19 @@ export function describeStation(label, icao, m, taf = null) {
   return lines.join('\n');
 }
 
-function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, winds, hazards, notams, sua }) {
+function fallbackBriefing({ departure, arrival, altitude, aircraft, weather, routeWeather, winds, hazards, notams, sua }) {
   // Fallback: return structured briefing without AI synthesis
   let weatherSummary = 'Unable to fetch weather data';
   let windSummary = 'Winds aloft unavailable';
   let hazardSummary = 'Adverse conditions not checked';
+  let routeSummary = 'Enroute stations not checked';
+
+  try {
+    const rw = typeof routeWeather === 'string' ? JSON.parse(routeWeather) : routeWeather;
+    if (rw) routeSummary = describeRouteWeather(rw);
+  } catch (e) {
+    // Keep default
+  }
 
   try {
     const h = typeof hazards === 'string' ? JSON.parse(hazards) : hazards;
@@ -305,6 +343,9 @@ ${hazardSummary}
 WEATHER:
 ${weatherSummary}
 
+ENROUTE STATIONS:
+${routeSummary}
+
 WINDS ALOFT:
 ${windSummary}
 
@@ -325,3 +366,4 @@ export async function streamBriefing(briefingData) {
   // TODO: integrate with Albert voice server for live TTS
   return generateBriefing(briefingData);
 }
+
