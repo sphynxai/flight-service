@@ -103,6 +103,38 @@ export function routeBounds(points, padNm = DEFAULT_CORRIDOR_NM) {
   };
 }
 
+const EARTH_NM = 3440.065;
+
+/** Great-circle distance in nm between two {lat, lon}. */
+export function distanceNm(a, b) {
+  const la1 = num(a?.lat), lo1 = num(a?.lon);
+  const la2 = num(b?.lat), lo2 = num(b?.lon);
+  if ([la1, lo1, la2, lo2].some(v => v === null)) return null;
+
+  const r = (d) => (d * Math.PI) / 180;
+  const dLat = r(la2 - la1), dLon = r(lo2 - lo1);
+  const h = Math.sin(dLat / 2) ** 2 +
+            Math.cos(r(la1)) * Math.cos(r(la2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * Math.asin(Math.min(1, Math.sqrt(h))) * EARTH_NM;
+}
+
+/**
+ * Should the reported position widen the route box?
+ *
+ * Only when the pilot is actually near the flight. Someone planning a Texas
+ * departure from a desk in Los Angeles is 1,200 nm away — folding that position
+ * into the bounding box stretches it across the continent and fills the briefing
+ * with West Coast SIGMETs that have nothing to do with the route. Position is
+ * additive when you are near the flight and noise when you are not.
+ */
+export function positionIsOnRoute(position, endpoints, maxNm = 250) {
+  const d = endpoints
+    .map(e => distanceNm(position, e))
+    .filter(v => v !== null);
+  if (!d.length) return false;
+  return Math.min(...d) <= maxNm;
+}
+
 /** Axis-aligned overlap test. Touching edges count as overlapping. */
 export function boundsIntersect(a, b) {
   if (!a || !b) return false;

@@ -345,6 +345,34 @@ function route_bounds(array $points, float $padNm = CORRIDOR_NM): ?array {
     ];
 }
 
+/** Great-circle distance in nm between two ['lat'=>,'lon'=>]. */
+function distance_nm(?array $a, ?array $b): ?float {
+    foreach ([$a, $b] as $p) {
+        if (!$p || !is_numeric($p['lat'] ?? null) || !is_numeric($p['lon'] ?? null)) return null;
+    }
+    $la1 = deg2rad((float)$a['lat']); $la2 = deg2rad((float)$b['lat']);
+    $dLat = $la2 - $la1;
+    $dLon = deg2rad((float)$b['lon'] - (float)$a['lon']);
+    $h = sin($dLat / 2) ** 2 + cos($la1) * cos($la2) * sin($dLon / 2) ** 2;
+    return 2 * asin(min(1, sqrt($h))) * 3440.065;
+}
+
+/**
+ * Should the reported position widen the route box?
+ *
+ * Only when the pilot is near the flight. Planning a Texas departure from a desk
+ * in Los Angeles is 1,200 nm away — folding that in stretches the box across the
+ * continent and fills the briefing with irrelevant West Coast hazards.
+ */
+function position_is_on_route(?array $pos, array $endpoints, float $maxNm = 250): bool {
+    $d = [];
+    foreach ($endpoints as $e) {
+        $x = distance_nm($pos, $e);
+        if ($x !== null) $d[] = $x;
+    }
+    return $d ? min($d) <= $maxNm : false;
+}
+
 function bounds_intersect(?array $a, ?array $b): bool {
     if (!$a || !$b) return false;
     return $a['minLat'] <= $b['maxLat'] && $a['maxLat'] >= $b['minLat']
@@ -1042,13 +1070,28 @@ $winds = [
 // Route geometry: both airports plus the pilot's reported position, so a hazard
 // near where the aircraft actually is counts even when it sits off the direct
 // line between the airports.
-$hazards = fetch_hazards([
+$endpoints = [
     ['lat' => $weather['departure']['metar']['lat'] ?? null,
      'lon' => $weather['departure']['metar']['lon'] ?? null],
     ['lat' => $weather['arrival']['metar']['lat'] ?? null,
      'lon' => $weather['arrival']['metar']['lon'] ?? null],
-    ['lat' => $body['latitude'] ?? null, 'lon' => $body['longitude'] ?? null],
-]);
+];
+
+$position = (isset($body['latitude'], $body['longitude'])
+             && is_numeric($body['latitude']) && is_numeric($body['longitude']))
+    ? ['lat' => (float)$body['latitude'], 'lon' => (float)$body['longitude']]
+    : null;
+
+$positionUsed = $position ? position_is_on_route($position, $endpoints) : false;
+
+$dists = [];
+foreach ($endpoints as $e) {
+    $x = distance_nm($position, $e);
+    if ($x !== null) $dists[] = $x;
+}
+$positionDistanceNm = $dists ? (int)round(min($dists)) : null;
+
+$hazards = fetch_hazards($positionUsed ? array_merge($endpoints, [$position]) : $endpoints);
 
 // Placeholders — flagged so the UI cannot present them as live FAA data.
 $notams = [
@@ -1115,5 +1158,14 @@ echo json_encode([
     'sua'       => $sua,
     'aircraft'  => $aircraft ?: null,
     'altitude'  => $altitude ?: null,
+    'location'  => [
+        'used' => $positionUsed,
+        'distanceNm' => $positionDistanceNm,
+        'note' => $position
+            ? ($positionUsed
+                ? "Position is {$positionDistanceNm} nm from the route and was included."
+                : "Position is {$positionDistanceNm} nm from the route — too far to be relevant, so it was not used. The briefing covers the filed route only.")
+            : 'No position reported; the briefing covers the filed route only.',
+    ],
     'timestamp' => gmdate('c'),
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

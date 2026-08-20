@@ -5,7 +5,7 @@ import { config } from 'dotenv';
 import { getWeatherBriefing, fetchRouteMetars } from './weather-fetcher.js';
 import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
 import { fetchWindsAloft } from './winds-fetcher.js';
-import { fetchHazards } from './hazards-fetcher.js';
+import { fetchHazards, positionIsOnRoute, distanceNm } from './hazards-fetcher.js';
 import { buildVoiceBriefing } from './voice-briefing.js';
 import { generateBriefing } from './briefing-agent.js';
 
@@ -47,14 +47,27 @@ app.post('/api/briefing', async (req, res) => {
 
     const winds = { departure: depWinds, arrival: arrWinds };
 
-    // Route geometry: the two airports plus the pilot's reported position, so a
-    // hazard near where the aircraft actually is counts even when it sits off
-    // the direct line between the airports.
-    const hazards = await fetchHazards([
+    // Route geometry. The reported position widens the box ONLY when the pilot
+    // is actually near the flight — briefing a Texas route from a desk in Los
+    // Angeles would otherwise stretch the box across the continent and fill the
+    // briefing with West Coast hazards that have nothing to do with the route.
+    const endpoints = [
       { lat: weather.departure?.metar?.lat, lon: weather.departure?.metar?.lon },
-      { lat: weather.arrival?.metar?.lat, lon: weather.arrival?.metar?.lon },
-      { lat: latitude, lon: longitude }
-    ]);
+      { lat: weather.arrival?.metar?.lat, lon: weather.arrival?.metar?.lon }
+    ];
+    const position = (latitude != null && longitude != null)
+      ? { lat: latitude, lon: longitude }
+      : null;
+
+    const positionUsed = position ? positionIsOnRoute(position, endpoints) : false;
+    const dists = position
+      ? endpoints.map(e => distanceNm(position, e)).filter(v => v !== null)
+      : [];
+    const positionDistanceNm = dists.length ? Math.round(Math.min(...dists)) : null;
+
+    const hazards = await fetchHazards(
+      positionUsed ? [...endpoints, position] : endpoints
+    );
 
     // Reuse the hazard corridor so enroute weather and hazards describe the
     // same piece of sky.
@@ -102,7 +115,17 @@ app.post('/api/briefing', async (req, res) => {
       sua,
       aircraft: aircraft ? aircraft.toUpperCase() : null,
       altitude: altitude || null,
-      location: { latitude, longitude },
+      location: {
+        latitude, longitude,
+        // Whether the reported position influenced the briefing, and why not.
+        used: positionUsed,
+        distanceNm: positionDistanceNm,
+        note: position
+          ? (positionUsed
+              ? `Position is ${positionDistanceNm} nm from the route and was included.`
+              : `Position is ${positionDistanceNm} nm from the route — too far to be relevant, so it was not used. The briefing covers the filed route only.`)
+          : 'No position reported; the briefing covers the filed route only.'
+      },
       timestamp: new Date().toISOString()
     });
   } catch (err) {

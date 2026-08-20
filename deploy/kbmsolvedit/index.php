@@ -224,6 +224,20 @@
     }
     .toggle-raw:hover { background: none; text-decoration: underline; }
 
+    .opt { font-weight: 400; color: #8a93a0; font-size: 12px; }
+    .loc-modes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    button.loc-mode {
+      width: auto; margin: 0; flex: 1 1 auto; min-width: 118px;
+      padding: 8px 12px; font-size: 12.5px; font-weight: 500;
+      background: #f1f3f6; color: #46525f; border: 1px solid #dde2e8;
+    }
+    button.loc-mode:hover { background: #e6eaf0; }
+    button.loc-mode.active {
+      background: #2a5298; color: #fff; border-color: #2a5298; font-weight: 600;
+    }
+    .manual-coords { display: flex; gap: 8px; margin-bottom: 8px; }
+    .manual-coords input { font-size: 13px; }
+
     .voice-bar {
       margin-top: 18px;
       padding-top: 18px;
@@ -313,10 +327,19 @@
       </div>
 
       <div class="form-group">
-        <label>Your Location</label>
+        <label>Your position <span class="opt">— optional, only used if near the route</span></label>
+        <div class="loc-modes" role="group" aria-label="Position source">
+          <button type="button" class="loc-mode active" data-mode="route">Filed route only</button>
+          <button type="button" class="loc-mode" data-mode="gps">Use my location</button>
+          <button type="button" class="loc-mode" data-mode="manual">Enter manually</button>
+        </div>
+        <div class="manual-coords" id="manualCoords" hidden>
+          <input type="text" id="latInput" placeholder="Latitude e.g. 32.99" inputmode="decimal">
+          <input type="text" id="lonInput" placeholder="Longitude e.g. -97.32" inputmode="decimal">
+        </div>
         <div class="geolocation-badge">
           <span class="location-icon">📍</span>
-          <span id="locationStatus">Detecting...</span>
+          <span id="locationStatus">Briefing the filed route — no position used.</span>
         </div>
         <input type="hidden" id="latitude" name="latitude">
         <input type="hidden" id="longitude" name="longitude">
@@ -349,25 +372,69 @@
   </div>
 
   <script>
-    // Geolocation setup
-    function detectLocation() {
-      const statusEl = document.getElementById('locationStatus');
-      if ('geolocation' in navigator) {
+    // Position is OPTIONAL and additive. It is never auto-requested: a permission
+    // prompt on load is friction, and a position far from the route is worse than
+    // none — the server ignores anything beyond 250 nm and says so.
+    const statusEl = document.getElementById('locationStatus');
+    const latEl = document.getElementById('latitude');
+    const lonEl = document.getElementById('longitude');
+    const manualBox = document.getElementById('manualCoords');
+    const latInput = document.getElementById('latInput');
+    const lonInput = document.getElementById('lonInput');
+
+    function setMode(mode) {
+      document.querySelectorAll('.loc-mode').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === mode));
+      manualBox.hidden = mode !== 'manual';
+
+      if (mode === 'route') {
+        latEl.value = ''; lonEl.value = '';
+        statusEl.textContent = 'Briefing the filed route — no position used.';
+      } else if (mode === 'manual') {
+        applyManual();
+      } else if (mode === 'gps') {
+        if (!('geolocation' in navigator)) {
+          statusEl.textContent = 'This browser does not support location.';
+          return;
+        }
+        statusEl.textContent = 'Requesting location…';
         navigator.geolocation.getCurrentPosition(
           (pos) => {
-            document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
-            document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
-            statusEl.textContent = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
+            latEl.value = pos.coords.latitude.toFixed(4);
+            lonEl.value = pos.coords.longitude.toFixed(4);
+            statusEl.textContent = `${latEl.value}, ${lonEl.value} — used only if within 250 nm of the route.`;
           },
           (err) => {
-            statusEl.textContent = 'Geolocation denied (manual entry ok)';
-            console.warn('Geolocation denied:', err);
+            latEl.value = ''; lonEl.value = '';
+            statusEl.textContent = err.code === 1
+              ? 'Location permission denied — enter coordinates manually or brief the filed route.'
+              : 'Location unavailable — enter coordinates manually or brief the filed route.';
           }
         );
-      } else {
-        statusEl.textContent = 'Browser does not support geolocation';
       }
     }
+
+    function applyManual() {
+      const la = parseFloat(latInput.value);
+      const lo = parseFloat(lonInput.value);
+      const ok = Number.isFinite(la) && Number.isFinite(lo) &&
+                 Math.abs(la) <= 90 && Math.abs(lo) <= 180;
+      if (ok) {
+        latEl.value = la.toFixed(4);
+        lonEl.value = lo.toFixed(4);
+        statusEl.textContent = `${latEl.value}, ${lonEl.value} — used only if within 250 nm of the route.`;
+      } else {
+        latEl.value = ''; lonEl.value = '';
+        statusEl.textContent = latInput.value || lonInput.value
+          ? 'Enter a valid latitude (−90 to 90) and longitude (−180 to 180).'
+          : 'Enter coordinates, or switch back to filed route only.';
+      }
+    }
+
+    document.querySelectorAll('.loc-mode').forEach(b =>
+      b.addEventListener('click', () => setMode(b.dataset.mode)));
+    latInput.addEventListener('input', applyManual);
+    lonInput.addEventListener('input', applyManual);
 
     // Request briefing
     document.getElementById('briefingForm').addEventListener('submit', async (e) => {
@@ -647,6 +714,12 @@
           <div class="notam-item">${esc(sua.message || 'No data')}</div>
         </div>
 
+        ${data.location?.note ? `<div class="section">
+          <div class="section-title">Position</div>
+          <div class="notam-item"${data.location.used ? '' : ' style="border-left-color:#f9a825;"'}>
+            ${esc(data.location.note)}</div>
+        </div>` : ''}
+
         <div class="section">
           <div class="section-title">Advisory</div>
           <div class="advisory">
@@ -829,8 +902,7 @@
       });
     }
 
-    // Initialize on load
-    detectLocation();
+    // No auto-request on load; the default mode needs no position.
   </script>
 </body>
 </html>
