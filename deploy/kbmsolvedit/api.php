@@ -37,7 +37,15 @@ const LEVEL_COLUMNS = [
 // FB station IDs are not ICAO. Most drop the leading K; a few busy airports have
 // no FB station and are represented by another field in the metro. Substitutions
 // are surfaced in the response so the reader sees which station was used.
-const ICAO_TO_FB = ['KDFW' => 'DAL'];
+// Nearest FB station where the airport has none of its own. Surfaced in the UI
+// as "nearest available" so the substitution is visible.
+const ICAO_TO_FB = [
+    'KDFW' => 'DAL', // ~15 nm
+    'KDTO' => 'DAL', // Denton Enterprise, ~30 nm
+    'KADS' => 'DAL', // Addison, ~10 nm
+    'KFTW' => 'DAL', // Meacham, ~25 nm
+    'KAFW' => 'DAL', // Fort Worth Alliance, ~30 nm
+];
 
 function fail(int $code, string $msg): void {
     http_response_code($code);
@@ -45,7 +53,7 @@ function fail(int $code, string $msg): void {
     exit;
 }
 
-function fetch_all(array $urls): array {
+function fetch_all(array $urls, bool $retry = true): array {
     $mh = curl_multi_init();
     $handles = [];
     foreach ($urls as $key => $url) {
@@ -76,6 +84,21 @@ function fetch_all(array $urls): array {
         curl_close($ch);
     }
     curl_multi_close($mh);
+
+    // One retry for anything that dropped. A briefing makes ~14 outbound calls;
+    // a single lost METAR does not just blank one station, it nulls the route
+    // geometry and silently widens the enroute corridor. Observed live.
+    if ($retry) {
+        $missing = [];
+        foreach ($out as $k => $v) if ($v === null) $missing[$k] = $urls[$k];
+        if ($missing) {
+            usleep(400000);
+            foreach (fetch_all($missing, false) as $k => $v) {
+                if ($v !== null) $out[$k] = $v;
+            }
+        }
+    }
+
     return $out;
 }
 
@@ -752,6 +775,218 @@ function describe_winds(string $label, array $w): string {
     return "$label: $level — $wind$temp\n  station $station, raw {$w['raw']}";
 }
 
+// ----------------------------------------------------- spoken briefing -----
+// Mirror of src/voice-briefing.js. A voice briefing is NOT the written one read
+// aloud: raw METAR strings are unlistenable, and a synthesiser reads "210" as
+// "two hundred ten" — wrong for a heading, which is spoken digit by digit.
+
+const V_DIGITS = ['zero','one','two','three','four','five','six','seven','eight','nine'];
+
+function v_digits($n): string {
+    if ($n === null) return '';
+    $s = (string)abs((int)round((float)$n));
+    $out = [];
+    foreach (str_split($s) as $d) $out[] = V_DIGITS[(int)$d] ?? $d;
+    return implode(' ', $out);
+}
+
+function v_heading($deg): string {
+    if ($deg === null) return '';
+    $s = str_pad((string)(int)round((float)$deg), 3, '0', STR_PAD_LEFT);
+    $out = [];
+    foreach (str_split($s) as $d) $out[] = V_DIGITS[(int)$d] ?? $d;
+    return implode(' ', $out);
+}
+
+function v_altitude($ft): string {
+    if ($ft === null) return '';
+    $n = (int)round((float)$ft);
+    if ($n >= 18000) return 'flight level ' . v_digits((int)round($n / 100));
+    if ($n >= 1000 && $n % 1000 === 0) return v_digits($n / 1000) . ' thousand feet';
+    return number_format($n) . ' feet';
+}
+
+function v_place(?string $name, ?string $icao): string {
+    if (!$name) return v_icao($icao);
+    $s = explode(',', $name)[0];
+    $s = preg_replace('/\bIntl\b/i', 'International', $s);
+    $s = preg_replace('/\bRgnl\b/i', 'Regional', $s);
+    $s = preg_replace('/\bMuni\b/i', 'Municipal', $s);
+    $s = preg_replace('/\bArpt\b/i', 'Airport', $s);
+    $s = preg_replace('/\bFt\b/i', 'Fort', $s);
+    $s = preg_replace('/\bSt\b/i', 'Saint', $s);
+    return trim(preg_replace('/\s+/', ' ', str_replace(['-', '/'], ' ', $s)));
+}
+
+function v_icao(?string $code): string {
+    $nato = ['A'=>'Alpha','B'=>'Bravo','C'=>'Charlie','D'=>'Delta','E'=>'Echo','F'=>'Foxtrot',
+             'G'=>'Golf','H'=>'Hotel','I'=>'India','J'=>'Juliet','K'=>'Kilo','L'=>'Lima',
+             'M'=>'Mike','N'=>'November','O'=>'Oscar','P'=>'Papa','Q'=>'Quebec','R'=>'Romeo',
+             'S'=>'Sierra','T'=>'Tango','U'=>'Uniform','V'=>'Victor','W'=>'Whiskey',
+             'X'=>'X-ray','Y'=>'Yankee','Z'=>'Zulu'];
+    $out = [];
+    foreach (str_split(strtoupper((string)$code)) as $c) {
+        $out[] = $nato[$c] ?? (ctype_digit($c) ? V_DIGITS[(int)$c] : $c);
+    }
+    return implode(' ', $out);
+}
+
+/**
+ * Aviation contractions expanded for speech. "LLWS +10 KT DURD RWY 22" spoken
+ * verbatim is noise — and it is the most actionable line in the briefing.
+ * Longest keys first so DURD is not partially matched.
+ */
+function v_expand(?string $text): string {
+    if (!$text) return '';
+    $s = strtoupper($text);
+    $map = [
+        '/\bLLWS\b/' => 'low level wind shear', '/\bDURGD\b/' => 'during descent',
+        '/\bDURD\b/' => 'during descent', '/\bDURC\b/' => 'during climb',
+        '/\bINTMT\b/' => 'intermittent', '/\bOCNL\b/' => 'occasional',
+        '/\bCONS\b/' => 'continuous', '/\bMOD\b/' => 'moderate', '/\bSEV\b/' => 'severe',
+        '/\bLGT\b/' => 'light', '/\bNEG\b/' => 'negative', '/\bMX\b/' => 'mixed',
+        '/\bCHOP\b/' => 'chop', '/\bTURB\b/' => 'turbulence', '/\bSKC\b/' => 'sky clear',
+        '/\bOVC\b/' => 'overcast', '/\bBKN\b/' => 'broken', '/\bSCT\b/' => 'scattered',
+        '/\bFEW\b/' => 'few', '/\bTOPS?\b/' => 'tops', '/\bBLO\b/' => 'below',
+        '/\bABV\b/' => 'above', '/\bRWY\b/' => 'runway', '/\bKTS?\b/' => 'knots',
+        '/\bVIS\b/' => 'visibility', '/\bWX\b/' => 'weather',
+        '/\bTSTMS?\b/' => 'thunderstorms', '/\bCB\b/' => 'cumulonimbus',
+    ];
+    $s = preg_replace(array_keys($map), array_values($map), $s);
+    $s = preg_replace_callback('/\bFL(\d{3})\b/', fn($m) => 'flight level ' . v_digits($m[1]), $s);
+    $s = preg_replace('/\+\s*(\d+)/', 'plus $1', $s);
+    $s = preg_replace('/-\s*(\d+)/', 'minus $1', $s);
+    return strtolower(trim(preg_replace('/\s+/', ' ', $s)));
+}
+
+function v_category(?string $c): string {
+    return ['VFR'=>'V F R','MVFR'=>'marginal V F R','IFR'=>'I F R','LIFR'=>'low I F R'][$c]
+        ?? ($c ?: 'category unavailable');
+}
+
+function v_station(string $role, ?string $icao, ?array $m): string {
+    if (!$m) return "$role, " . v_icao($icao) . ', no observation available.';
+
+    $parts = ["$role, " . v_place($m['station'] ?? null, $icao) . ', is ' . v_category($m['fltCat'] ?? null)];
+
+    if (($m['wdir'] ?? null) === 0 && ($m['wspd'] ?? null) === 0) {
+        $parts[] = 'wind calm';
+    } elseif (($m['wspd'] ?? null) !== null) {
+        $dir = ($m['wdir'] === 'VRB') ? 'wind variable' : 'wind ' . v_heading($m['wdir']);
+        $gust = !empty($m['wgst']) ? ' gusting ' . v_digits($m['wgst']) : '';
+        $parts[] = "$dir at " . v_digits($m['wspd']) . $gust;
+    }
+
+    if (($m['visib'] ?? null) !== null) {
+        $parts[] = 'visibility ' . str_replace('+', ' or more', (string)$m['visib']) . ' miles';
+    }
+
+    foreach ($m['clouds'] ?? [] as $c) {
+        if (in_array($c['cover'] ?? '', ['BKN', 'OVC'], true)) {
+            $parts[] = 'ceiling ' . ($c['cover'] === 'OVC' ? 'overcast' : 'broken') . ' ' . v_altitude($c['base']);
+            break;
+        }
+    }
+
+    if (($m['temp'] ?? null) !== null) $parts[] = 'temperature ' . round($m['temp']) . ' Celsius';
+
+    // Density altitude only earns airtime when materially above the field.
+    if (($m['densityAltitude'] ?? null) !== null && ($m['elev'] ?? null) !== null) {
+        $fieldFt = $m['elev'] * 3.280839895;
+        $excess = $m['densityAltitude'] - $fieldFt;
+        if ($excess >= 1000) {
+            $parts[] = 'density altitude ' . number_format($m['densityAltitude']) . ' feet, about '
+                     . (round($excess / 100) * 100) . ' feet above field elevation';
+        }
+    }
+
+    return implode(', ', $parts) . '.';
+}
+
+function build_voice_briefing(array $d): string {
+    $w = $d['weather'] ?? [];
+    $dep = $w['departure'] ?? []; $arr = $w['arrival'] ?? [];
+    $lines = [];
+
+    $from = v_place($dep['metar']['station'] ?? null, $dep['airport'] ?? null);
+    $to   = v_place($arr['metar']['station'] ?? null, $arr['airport'] ?? null);
+    $lvl  = !empty($d['altitude']) ? ', ' . v_altitude($d['altitude']) : '';
+    $lines[] = "Flight Service briefing. $from to $to$lvl.";
+
+    // Hazards lead — this is the part that changes a decision.
+    $lines[] = 'Adverse conditions first.';
+    $h = $d['hazards'] ?? null;
+    if (!$h || empty($h['available'])) {
+        $lines[] = 'Adverse conditions were not checked.';
+    } else {
+        $conv = $h['convectiveSigmets'] ?? [];
+        if ($conv) {
+            $tops = array_filter(array_column($conv, 'altitudeHigh'), fn($v) => $v !== null);
+            $top = $tops ? ', tops to ' . v_altitude(max($tops)) : '';
+            $n = count($conv);
+            $lines[] = ($n === 1 ? 'One convective SIGMET' : "$n convective SIGMETs") . " on route$top.";
+        }
+        foreach (array_slice($h['sigmets'] ?? [], 0, 2) as $s) {
+            $lines[] = 'SIGMET for ' . strtolower($s['hazard'] ?? 'hazardous weather') . ' on route.';
+        }
+        $byHaz = [];
+        foreach ($h['gairmets'] ?? [] as $g) $byHaz[$g['hazard']] = $g;
+        foreach (['ICE' => 'icing', 'TURB-HI' => 'turbulence', 'TURB-LO' => 'turbulence'] as $k => $label) {
+            if (!isset($byHaz[$k])) continue;
+            $t = $byHaz[$k]['top']['ft'] ?? null;
+            $lines[] = "Airmet for $label" . ($t !== null ? ' up to ' . v_altitude($t) : '') . '.';
+        }
+        $urgent = array_values(array_filter($h['pireps'] ?? [], fn($p) => !empty($p['urgent'])));
+        foreach (array_slice($urgent, 0, 2) as $p) {
+            $at = ($p['flightLevel'] ?? null) !== null ? ' at ' . v_altitude($p['flightLevel']) : '';
+            $what = preg_match('#/RM\s+(.+?)(?:/[A-Z]{2}\s|$)#', (string)$p['raw'], $mm)
+                ? v_expand($mm[1]) : 'see the full report';
+            $lines[] = "Urgent pilot report$at: $what.";
+        }
+        if (count($lines) === 2) $lines[] = 'No SIGMETs or airmets on route.';
+    }
+
+    $lines[] = v_station('Departure', $dep['airport'] ?? null, $dep['metar'] ?? null);
+    $lines[] = v_station('Arrival', $arr['airport'] ?? null, $arr['metar'] ?? null);
+
+    $useW = !empty($d['winds']['arrival']['available']) ? $d['winds']['arrival']
+          : ($d['winds']['departure'] ?? null);
+    if (!empty($useW['available'])) {
+        $wind = !empty($useW['lightVariable'])
+            ? 'light and variable'
+            : v_heading($useW['dir']) . ' at ' . v_digits($useW['speed']);
+        // Winds-aloft temps are negative at cruise but POSITIVE at low level in
+        // summer. Hardcoding "minus" told a GA pilot at 6,000 ft it was minus 26
+        // when the report said plus 26 — that inverts an icing assessment.
+        $t = ($useW['temp'] ?? null) !== null
+            ? ', temperature ' . ($useW['temp'] < 0 ? 'minus' : 'plus') . ' ' . v_digits(abs($useW['temp']))
+            : '';
+        $lines[] = 'Winds aloft at ' . v_altitude($useW['level']) . ", $wind$t.";
+    }
+
+    // Counts and distances are ordinary numbers, NOT digit strings — a briefer
+    // says "thirteen stations within fifty miles", never "one three stations".
+    $rw = $d['routeWeather'] ?? null;
+    if (!empty($rw['available']) && !empty($rw['total'])) {
+        $within = 'within ' . round($rw['corridorNm']) . ' miles of track';
+        $lines[] = $rw['belowVfr']
+            ? "Enroute, {$rw['belowVfr']} of {$rw['total']} stations $within are below V F R."
+            : "Enroute, all {$rw['total']} stations $within are reporting V F R.";
+    }
+
+    // Scaffolding must be stated aloud — a listener cannot see a badge.
+    $mock = false;
+    foreach ($d['notams'] ?? [] as $n) if (($n['source'] ?? '') === 'placeholder') $mock = true;
+    if ($mock || (($d['sua']['source'] ?? '') === 'placeholder')) {
+        $lines[] = 'NOTAMs and special use airspace are not connected in this demo, and were not checked.';
+    }
+
+    $lines[] = 'This is advisory only and is not an official F A A briefing. '
+             . 'The pilot in command remains responsible for the go, no go decision.';
+
+    return implode(' ', $lines);
+}
+
 // ---------------------------------------------------------------- request ---
 
 // Under CLI this file is being included by the conformance tests, which need
@@ -861,9 +1096,17 @@ $briefing = $head . "\n\nADVERSE CONDITIONS:\n" . describe_hazards($hazards)
     . "This is not an official FAA weather briefing and does not substitute for one.\n"
     . 'The pilot in command is responsible for the go/no-go decision.';
 
+// Spoken rendering is built from the same data, not from the text briefing.
+$voice = build_voice_briefing([
+    'weather' => $weather, 'routeWeather' => $routeWeather, 'winds' => $winds,
+    'hazards' => $hazards, 'notams' => $notams, 'sua' => $sua,
+    'altitude' => $altitude ?: null,
+]);
+
 echo json_encode([
     'status'    => 'ok',
     'briefing'  => $briefing,
+    'voice'     => $voice,
     'weather'   => $weather,
     'winds'     => $winds,
     'hazards'   => $hazards,

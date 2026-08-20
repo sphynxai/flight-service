@@ -40,7 +40,11 @@ const LEVEL_COLUMNS = [
 // reader can see which field the forecast is actually for. Airports with no
 // defensible nearby station are left out and reported unavailable.
 const ICAO_TO_FB = {
-  KDFW: 'DAL' // Dallas/Fort Worth -> Dallas Love, ~15 nm; immaterial at cruise
+  KDFW: 'DAL', // Dallas/Fort Worth -> Dallas Love, ~15 nm; immaterial at cruise
+  KDTO: 'DAL', // Denton Enterprise -> Dallas Love, ~30 nm; nearest FB station
+  KADS: 'DAL', // Addison -> Dallas Love, ~10 nm
+  KFTW: 'DAL', // Meacham -> Dallas Love, ~25 nm
+  KAFW: 'DAL'  // Fort Worth Alliance -> Dallas Love, ~30 nm
 };
 
 let tableCache = null;

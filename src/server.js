@@ -6,6 +6,7 @@ import { getWeatherBriefing, fetchRouteMetars } from './weather-fetcher.js';
 import { fetchNOTAMs, fetchSUA } from './notam-fetcher.js';
 import { fetchWindsAloft } from './winds-fetcher.js';
 import { fetchHazards } from './hazards-fetcher.js';
+import { buildVoiceBriefing } from './voice-briefing.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -83,9 +84,16 @@ app.post('/api/briefing', async (req, res) => {
       sua: JSON.stringify(sua)
     });
 
+    // Spoken rendering is built from the same data, not from the text briefing.
+    const voice = buildVoiceBriefing({
+      weather, routeWeather, winds, hazards, notams, sua,
+      altitude: altitude || null
+    });
+
     res.json({
       status: 'ok',
       briefing,
+      voice,
       weather,
       routeWeather,
       winds,

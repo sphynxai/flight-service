@@ -223,6 +223,50 @@
       margin: 0 0 10px 0;
     }
     .toggle-raw:hover { background: none; text-decoration: underline; }
+
+    .voice-bar {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid #eee;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+    button.mic {
+      width: auto;
+      margin: 0;
+      padding: 11px 22px;
+      background: #0f7b45;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+    }
+    button.mic:hover { background: #0b5f35; }
+    button.mic[disabled] { background: #ccc; }
+    button.mic.listening { background: #c62828; }
+    .mic-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #fff; opacity: 0.9;
+      flex-shrink: 0;
+    }
+    button.mic.listening .mic-dot { animation: pulse 1.1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      button.mic.listening .mic-dot { animation: none; }
+    }
+    .voice-hint { font-size: 12px; color: #8a93a0; text-align: center; }
+    .heard {
+      font-size: 13px;
+      color: #1e3c72;
+      background: #eef2f8;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-style: italic;
+      text-align: center;
+      width: 100%;
+    }
     .status {
       font-size: 12px;
       color: #666;
@@ -249,22 +293,22 @@
     <form id="briefingForm">
       <div class="form-group">
         <label for="departure">Departure Airport (ICAO)</label>
-        <input type="text" id="departure" name="departure" placeholder="KDFW" value="KDFW" required>
+        <input type="text" id="departure" name="departure" placeholder="KAFW" value="KAFW" required>
       </div>
 
       <div class="form-group">
         <label for="arrival">Arrival Airport (ICAO)</label>
-        <input type="text" id="arrival" name="arrival" placeholder="KMSP" value="KMSP" required>
+        <input type="text" id="arrival" name="arrival" placeholder="KSPS" value="KSPS" required>
       </div>
 
       <div class="two-col">
         <div class="form-group">
           <label for="altitude">Cruising Altitude (feet)</label>
-          <input type="text" id="altitude" name="altitude" placeholder="30000" value="30000">
+          <input type="text" id="altitude" name="altitude" placeholder="4000" value="4000">
         </div>
         <div class="form-group">
           <label for="aircraft">Aircraft Type (optional)</label>
-          <input type="text" id="aircraft" name="aircraft" placeholder="B744" value="B744">
+          <input type="text" id="aircraft" name="aircraft" placeholder="C172" value="C172">
         </div>
       </div>
 
@@ -281,6 +325,17 @@
       <button type="submit">Get Briefing</button>
       <div class="status" id="status"></div>
     </form>
+
+    <div class="voice-bar">
+      <button type="button" id="micBtn" class="mic">
+        <span class="mic-dot" aria-hidden="true"></span>
+        <span id="micLabel">Speak your flight</span>
+      </button>
+      <div class="voice-hint" id="voiceHint">
+        Try: &ldquo;Alliance to Wichita Falls at four thousand&rdquo;
+      </div>
+      <div class="heard" id="heard" hidden></div>
+    </div>
 
     <div class="briefing-area" id="briefingArea" style="display: none;">
       <h3 style="color:#1e3c72; margin-bottom:18px;">Your Briefing</h3>
@@ -340,9 +395,16 @@
 
         // Display briefing
         document.getElementById('briefingText').textContent = data.briefing;
+        lastVoice = data.voice || null;
         renderBriefing(data);
         document.getElementById('briefingArea').style.display = 'block';
         statusEl.innerHTML = '<span class="success">✓ Briefing ready</span>';
+
+        // Only auto-speak when the request itself came by voice.
+        if (spokenAutomatically) {
+          spokenAutomatically = false;
+          speak(lastVoice);
+        }
       } catch (err) {
         statusEl.innerHTML = `<span class="error">✗ ${err.message}</span>`;
       }
@@ -602,16 +664,170 @@
       e.target.textContent = open ? 'Show full briefing text ▾' : 'Hide full briefing text ▴';
     });
 
-    // Text-to-speech (browser SpeechSynthesis fallback until Albert integrated)
+    // ---- voice ----------------------------------------------------------
+    // Speaks data.voice (the phraseology rendering built server-side), never the
+    // written briefing — raw METAR strings are unlistenable.
+    let lastVoice = null;
+    let spokenAutomatically = false;
+
+    function speak(text) {
+      if (!('speechSynthesis' in window) || !text) return;
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.95;   // briefer pace; slower drags on a 200-word briefing
+      u.pitch = 1.0;
+      speechSynthesis.speak(u);
+    }
+
     document.getElementById('speakButton').addEventListener('click', () => {
-      const text = document.getElementById('briefingText').textContent;
-      if ('speechSynthesis' in window) {
-        speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.9;
-        speechSynthesis.speak(utterance);
-      }
+      // Fall back to the written text only if no spoken rendering came back.
+      speak(lastVoice || document.getElementById('briefingText').textContent);
     });
+
+    // Spoken route -> form fields. Shows what it heard so a mishear is visible
+    // and correctable rather than silently briefing the wrong route.
+    const NATO_LETTER = {
+      alpha:'A', bravo:'B', charlie:'C', delta:'D', echo:'E', foxtrot:'F', golf:'G',
+      hotel:'H', india:'I', juliet:'J', juliett:'J', kilo:'K', lima:'L', mike:'M',
+      november:'N', oscar:'O', papa:'P', quebec:'Q', romeo:'R', sierra:'S',
+      tango:'T', uniform:'U', victor:'V', whiskey:'W', xray:'X', yankee:'Y', zulu:'Z'
+    };
+    const CITY_ICAO = {
+      // GA fields first — Flight Service's actual users fly these, not the hubs.
+      'denton':'KDTO', 'denton enterprise':'KDTO',
+      'addison':'KADS', 'meacham':'KFTW', 'fort worth':'KFTW',
+      'arlington':'KGKY', 'waco':'KACT', 'abilene':'KABI',
+      'durant':'KDUA', 'ardmore':'KADM', 'sherman':'KGYI',
+      'oklahoma city':'KOKC', 'will rogers':'KOKC', 'okc':'KOKC',
+      'dallas fort worth':'KDFW', 'dallas':'KDFW', 'dfw':'KDFW',
+      'minneapolis':'KMSP', 'minneapolis saint paul':'KMSP', 'msp':'KMSP',
+      'chicago':'KORD', "o'hare":'KORD', 'ohare':'KORD',
+      'denver':'KDEN', 'atlanta':'KATL', 'new york':'KJFK', 'kennedy':'KJFK',
+      'los angeles':'KLAX', 'lax':'KLAX', 'houston':'KIAH', 'phoenix':'KPHX',
+      'seattle':'KSEA', 'miami':'KMIA', 'boston':'KBOS', 'detroit':'KDTW',
+      'las vegas':'KLAS', 'oklahoma city':'KOKC', 'kansas city':'KMCI',
+      'saint louis':'KSTL', 'st louis':'KSTL', 'tulsa':'KTUL', 'austin':'KAUS',
+      'san antonio':'KSAT', 'nashville':'KBNA', 'memphis':'KMEM'
+    };
+    const WORD_DIGIT = { zero:'0', oh:'0', one:'1', two:'2', three:'3', four:'4',
+                         five:'5', six:'6', seven:'7', eight:'8', nine:'9', niner:'9' };
+
+    function icaoFromPhrase(phrase) {
+      const p = phrase.trim().toLowerCase().replace(/[^a-z' ]/g, '');
+      if (!p) return null;
+      if (CITY_ICAO[p]) return CITY_ICAO[p];
+
+      // NATO spelling, e.g. "kilo delta foxtrot whiskey"
+      const words = p.split(/\s+/);
+      const letters = words.map(w => NATO_LETTER[w]).filter(Boolean);
+      if (letters.length >= 3 && letters.length === words.length) return letters.join('');
+
+      // Bare letters, e.g. "k d f w"
+      if (words.length >= 3 && words.every(w => w.length === 1)) {
+        return words.join('').toUpperCase();
+      }
+      // Longest city match inside a looser phrase
+      for (const key of Object.keys(CITY_ICAO).sort((a, b) => b.length - a.length)) {
+        if (p.includes(key)) return CITY_ICAO[key];
+      }
+      return null;
+    }
+
+    function altitudeFromSpeech(s) {
+      // "flight level three zero zero" -> 30000
+      const fl = /flight level ((?:\w+\s*){1,3})/.exec(s);
+      if (fl) {
+        const digits = fl[1].trim().split(/\s+/).map(w => WORD_DIGIT[w] ?? (/^\d$/.test(w) ? w : null));
+        if (digits.length === 3 && digits.every(Boolean)) return Number(digits.join('')) * 100;
+        const n = parseInt(fl[1].replace(/\D/g, ''), 10);
+        if (Number.isFinite(n)) return n * 100;
+      }
+      // "eight thousand", "twelve thousand five hundred", "at 8000"
+      const th = /(\d{1,2})\s*thousand/.exec(s);
+      if (th) return Number(th[1]) * 1000;
+      const plain = /\b(\d{3,5})\s*(?:feet|ft)?\b/.exec(s);
+      if (plain) return Number(plain[1]);
+      return null;
+    }
+
+    function parseSpokenFlight(transcript) {
+      const s = transcript.toLowerCase();
+      const out = {};
+
+      const leg = /(?:from\s+)?(.+?)\s+(?:to|too|two)\s+(.+?)(?:\s+at\s+|\s+in\s+a\s+|$)/.exec(s);
+      if (leg) {
+        out.departure = icaoFromPhrase(leg[1]);
+        out.arrival = icaoFromPhrase(leg[2].replace(/\s+at\s+.*$/, ''));
+      }
+      out.altitude = altitudeFromSpeech(s);
+      return out;
+    }
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const micBtn = document.getElementById('micBtn');
+    const micLabel = document.getElementById('micLabel');
+    const heardEl = document.getElementById('heard');
+    const hintEl = document.getElementById('voiceHint');
+
+    if (!SR) {
+      micBtn.disabled = true;
+      micLabel.textContent = 'Voice input not supported in this browser';
+      hintEl.textContent = 'Chrome, Edge and Safari support speech input.';
+    } else {
+      const rec = new SR();
+      rec.lang = 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      let listening = false;
+
+      micBtn.addEventListener('click', () => {
+        if (listening) { rec.stop(); return; }
+        heardEl.hidden = true;
+        speechSynthesis.cancel();
+        try { rec.start(); } catch (e) { /* already starting */ }
+      });
+
+      rec.addEventListener('start', () => {
+        listening = true;
+        micBtn.classList.add('listening');
+        micLabel.textContent = 'Listening — tap to stop';
+      });
+
+      rec.addEventListener('end', () => {
+        listening = false;
+        micBtn.classList.remove('listening');
+        micLabel.textContent = 'Speak your flight';
+      });
+
+      rec.addEventListener('error', (e) => {
+        heardEl.hidden = false;
+        heardEl.textContent = e.error === 'not-allowed'
+          ? 'Microphone permission denied — enable it to use voice input.'
+          : `Speech input error: ${e.error}`;
+      });
+
+      rec.addEventListener('result', (e) => {
+        const transcript = e.results[0][0].transcript;
+        heardEl.hidden = false;
+        heardEl.textContent = `Heard: “${transcript}”`;
+
+        const p = parseSpokenFlight(transcript);
+        const applied = [];
+        if (p.departure) { document.getElementById('departure').value = p.departure; applied.push(p.departure); }
+        if (p.arrival) { document.getElementById('arrival').value = p.arrival; applied.push(p.arrival); }
+        if (p.altitude) { document.getElementById('altitude').value = p.altitude; }
+
+        if (applied.length === 2) {
+          heardEl.textContent += ` → ${applied[0]} to ${applied[1]}` +
+            (p.altitude ? ` at ${p.altitude.toLocaleString()} ft` : '');
+          spokenAutomatically = true;
+          document.getElementById('briefingForm').requestSubmit();
+        } else {
+          heardEl.textContent += ' — could not identify both airports. ' +
+            'Try spelling them, e.g. “kilo delta foxtrot whiskey to kilo mike sierra papa”.';
+        }
+      });
+    }
 
     // Initialize on load
     detectLocation();
