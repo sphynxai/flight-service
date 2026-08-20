@@ -153,15 +153,21 @@ export async function fetchTAF(airport) {
     const url = `${NOAA_API_BASE}/taf?${params}`;
     const response = await getWithRetry(url);
 
-    const raw = response.data?.[0]?.rawTAF;
-    if (!raw) return null;
+    const t = response.data?.[0];
+    if (!t?.rawTAF) return null;
 
-    cache.set(cacheKey, {
-      data: raw,
-      timestamp: Date.now()
-    });
+    // Keep the decoded periods, not just the raw string — they are what lets a
+    // briefing report conditions at a planned ETD/ETA rather than only now.
+    const data = {
+      raw: t.rawTAF,
+      validFrom: t.validTimeFrom ?? null,
+      validTo: t.validTimeTo ?? null,
+      periods: Array.isArray(t.fcsts) ? t.fcsts : []
+    };
 
-    return raw;
+    cache.set(cacheKey, { data, timestamp: Date.now() });
+
+    return data;
   } catch (err) {
     console.error(`TAF fetch failed for ${airport}:`, err.message);
     return null;

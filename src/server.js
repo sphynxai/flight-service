@@ -8,6 +8,7 @@ import { fetchWindsAloft } from './winds-fetcher.js';
 import { fetchHazards, positionIsOnRoute, distanceNm } from './hazards-fetcher.js';
 import { buildVoiceBriefing } from './voice-briefing.js';
 import { buildFlightPlan, prefillFromBriefing } from './flight-plan.js';
+import { resolveFlightTimes, forecastAt, summarisePeriod, scanWindow } from './flight-time.js';
 import { generateBriefing } from './briefing-agent.js';
 
 config();
@@ -28,7 +29,10 @@ app.get('/health', (req, res) => {
 // Briefing endpoint: accepts geolocation + route, returns weather/NOTAMs/SUA
 app.post('/api/briefing', async (req, res) => {
   try {
-    const { latitude, longitude, departure, arrival, altitude, aircraft } = req.body;
+    const {
+      latitude, longitude, departure, arrival, altitude, aircraft,
+      departureTime, eet
+    } = req.body;
 
     if (!departure || !arrival) {
       return res.status(400).json({ error: 'departure and arrival ICAO required' });
@@ -104,6 +108,41 @@ app.post('/api/briefing', async (req, res) => {
       altitude: altitude || null
     });
 
+    // Apply the flight plan's times to the briefing. Without a proposed
+    // departure time this is a report of current conditions; with one, the TAF
+    // period governing ETD and ETA is what actually matters, and Mike's
+    // "+/- 1 hour" window is what drives the alternate decision.
+    const times = resolveFlightTimes(departureTime, eet);
+    let planned = null;
+
+    if (times) {
+      const at = (taf, epoch) => {
+        const f = forecastAt(taf?.periods, epoch);
+        if (!f) return null;
+        return {
+          base: summarisePeriod(f.base),
+          overlays: f.overlays.map(summarisePeriod).filter(Boolean)
+        };
+      };
+
+      planned = {
+        etd: times.etd,
+        eta: times.eta,
+        hoursToDeparture: times.hoursToDeparture,
+        // Current observations stop being representative for a flight well in
+        // the future; say so rather than letting a stale METAR read as current.
+        observationsRepresentative: times.hoursToDeparture <= 2,
+        departure: {
+          forecast: at(weather.departure?.taf, times.etd),
+          window: scanWindow(weather.departure?.taf?.periods, times.etd)
+        },
+        arrival: {
+          forecast: at(weather.arrival?.taf, times.eta),
+          window: scanWindow(weather.arrival?.taf?.periods, times.eta)
+        }
+      };
+    }
+
     // Everything the briefing already knows, so the pilot types as little as
     // possible on the flight plan. Preparation only — nothing is filed.
     const flightPlanPrefill = prefillFromBriefing({
@@ -114,6 +153,7 @@ app.post('/api/briefing', async (req, res) => {
       status: 'ok',
       briefing,
       voice,
+      planned,
       flightPlanPrefill,
       weather,
       routeWeather,

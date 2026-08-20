@@ -257,7 +257,7 @@ export function describeStation(label, icao, m, taf = null) {
   }
 
   const lines = [`${label} (${icao}): ${bits.join(' · ')}`, `  ${m.raw}`];
-  if (taf) lines.push(`  ${taf}`);
+  if (taf?.raw || typeof taf === 'string') lines.push(`  ${taf.raw || taf}`);
   return lines.join('\n');
 }
 
