@@ -16,7 +16,8 @@
 2. **Open VNC viewer** in web browser
    - Click "Launch Console" or similar
    - Terminal should appear (FreeBSD prompt)
-   - If prompted for password, use: `BlsB1Tvo1QYT` (root password from SSH.txt)
+   - If prompted for password, use the root password from the hosting provider
+     (kept out of this repo — ask the npulse admin or check the credential store)
 
 ---
 
