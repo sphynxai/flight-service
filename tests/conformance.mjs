@@ -141,6 +141,15 @@ function verify(implName, impl) {
           'An unverified performance table must never produce usable planning figures.');
   }
 
+  if (Array.isArray(impl.tfrRouteCoverage)) {
+    check(`${implName}/tfr-route-coverage`, 'endpoint-only route is incomplete',
+          impl.tfrRouteCoverage[0], false,
+          'Two endpoints do not establish that a route avoids a TFR polygon.');
+    check(`${implName}/tfr-route-coverage`, 'three route points may be evaluated',
+          impl.tfrRouteCoverage[1], true,
+          'A detailed route must include at least one enroute geometry point.');
+  }
+
   // Ported to JS first; the PHP half is checked once api.php grows hazards.
   if (impl.gairmetAlt) {
     gairmetAlt.forEach((c, i) => {
@@ -164,7 +173,7 @@ if (php) verify('PHP', php);
 if (php) {
   // Only diff suites both implementations actually produce.
   const shared = ['groups', 'lines', 'levels', 'stations', 'density', 'gairmetAlt',
-                  'fpLevels', 'fpSpeeds', 'fpDurations', 'fpEnroute']
+                  'fpLevels', 'fpSpeeds', 'fpDurations', 'fpEnroute', 'tfrRouteCoverage']
     .filter(k => Array.isArray(js[k]) && Array.isArray(php[k]));
 
   for (const key of shared) {
@@ -179,7 +188,8 @@ if (php) {
         fpLevels: () => `${fpFx.levels[i].ft} ft`,
         fpSpeeds: () => `${fpFx.speeds[i].kt} kt`,
         fpDurations: () => `${fpFx.durations[i].min} min`,
-        fpEnroute: () => `eet case ${i + 1}`
+        fpEnroute: () => `eet case ${i + 1}`,
+        tfrRouteCoverage: () => `route coverage case ${i + 1}`
       }[key]();
       check('JS<->PHP drift', `${key} ${label}`, php[key][i], v,
             'the two implementations disagree — one of them is wrong');

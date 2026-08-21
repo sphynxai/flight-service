@@ -191,8 +191,9 @@ export function describeTfrs(t) {
   }
 
   if (!lines.length) {
-    lines.push(`No TFRs within ${t.corridorNm}nm of the route ` +
+    lines.push(`No TFRs identified within ${t.corridorNm}nm of the route ` +
                `(${t.totalActive} active nationally, ${t.checked} checked in ${t.states.join('/')}).`);
+    lines.push('Route-clear status is not established; confirm against the official FAA TFR source.');
   }
   if (t.truncated) {
     lines.push(`⚠ ${t.truncated} further TFR${t.truncated > 1 ? 's' : ''} in these states were not ` +
@@ -406,4 +407,3 @@ export async function streamBriefing(briefingData) {
   // TODO: integrate with Albert voice server for live TTS
   return generateBriefing(briefingData);
 }
-

@@ -130,11 +130,29 @@ export function nearestApproachNm(points, routePoints) {
   return best;
 }
 
+/**
+ * Endpoint-only geometry cannot establish that a route avoids a TFR polygon.
+ * A route clearance requires actual enroute fixes/corridor coverage; this
+ * integration currently receives departure and arrival points only.
+ */
+export function hasTfrRouteCoverage(routePoints) {
+  return (routePoints || []).filter(p => p?.lat != null && p?.lon != null).length >= 3;
+}
+
 export async function fetchTfrs(routePoints, states = [], corridorNm = 100) {
   const usable = (routePoints || []).filter(p => p?.lat != null && p?.lon != null);
 
   if (!usable.length) {
     return { available: false, reason: 'no route geometry', tfrs: [], checked: 0 };
+  }
+
+  if (!hasTfrRouteCoverage(usable)) {
+    return {
+      available: false,
+      reason: 'route geometry is endpoint-only; official TFR confirmation required',
+      tfrs: [],
+      checked: 0
+    };
   }
 
   let list;

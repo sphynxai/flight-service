@@ -26,7 +26,8 @@ function norm(?array $g): ?array {
 
 $out = ['groups' => [], 'lines' => [], 'levels' => [], 'stations' => [],
         'density' => [], 'gairmetAlt' => [],
-        'fpLevels' => [], 'fpSpeeds' => [], 'fpDurations' => [], 'fpEnroute' => []];
+        'fpLevels' => [], 'fpSpeeds' => [], 'fpDurations' => [], 'fpEnroute' => [],
+        'tfrRouteCoverage' => []];
 
 foreach (fx('fb-groups.json')['cases'] as $c) {
     $out['groups'][] = norm(fb_parse_group($c['raw']));
@@ -69,6 +70,11 @@ foreach ($fp['enroute'] as $c) {
     $out['fpEnroute'][] = $r === null ? null
         : ['minutes' => $r['minutes'], 'groundSpeed' => $r['groundSpeed']];
 }
+
+$out['tfrRouteCoverage'] = [
+    tfr_has_route_coverage([['lat' => 1, 'lon' => 1], ['lat' => 2, 'lon' => 2]]),
+    tfr_has_route_coverage([['lat' => 1, 'lon' => 1], ['lat' => 2, 'lon' => 2], ['lat' => 3, 'lon' => 3]]),
+];
 
 // JSON_PRESERVE_ZERO_FRACTION keeps numeric types comparable with the JS side.
 echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

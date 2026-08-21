@@ -1181,12 +1181,26 @@ function tfr_nearest_nm(array $points, array $route): ?float {
     return $best;
 }
 
+/** Endpoint-only geometry cannot establish that a route avoids a TFR polygon. */
+function tfr_has_route_coverage(array $route): bool {
+    $usable = 0;
+    foreach ($route as $p) {
+        if (is_numeric($p['lat'] ?? null) && is_numeric($p['lon'] ?? null)) $usable++;
+    }
+    return $usable >= 3;
+}
+
 function fetch_tfrs(array $routePoints, array $states, float $corridorNm = 100): array {
     $usable = [];
     foreach ($routePoints as $p) {
         if (is_numeric($p['lat'] ?? null) && is_numeric($p['lon'] ?? null)) $usable[] = $p;
     }
     if (!$usable) return ['available' => false, 'reason' => 'no route geometry', 'tfrs' => [], 'checked' => 0];
+    if (!tfr_has_route_coverage($usable)) {
+        return ['available' => false,
+                'reason' => 'route geometry is endpoint-only; official TFR confirmation required',
+                'tfrs' => [], 'checked' => 0];
+    }
 
     $res = fetch_all(['l' => TFR_LIST]);
     if ($res['l'] === null) {
@@ -1260,9 +1274,10 @@ function describe_tfrs(?array $t): string {
         if ($r['description']) $lines[] = '    ' . $r['description'];
     }
     if (!$lines) {
-        $lines[] = 'No TFRs within ' . (int)$t['corridorNm'] . 'nm of the route ('
+        $lines[] = 'No TFRs identified within ' . (int)$t['corridorNm'] . 'nm of the route ('
                  . $t['totalActive'] . ' active nationally, ' . $t['checked']
                  . ' checked in ' . implode('/', $t['states']) . ').';
+        $lines[] = 'Route-clear status is not established; confirm against the official FAA TFR source.';
     }
     if (!empty($t['truncated'])) {
         $lines[] = '⚠ ' . $t['truncated'] . ' further TFR' . ($t['truncated'] > 1 ? 's' : '')

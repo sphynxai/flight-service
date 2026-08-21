@@ -916,9 +916,10 @@
             body = `<div class="notam-item" style="border-left-color:#f9a825;">Temporary flight ` +
                    `restrictions not checked <span style="color:#8a93a0;">(${esc(t.reason || 'no data')})</span></div>`;
           } else if (!t.tfrs.length) {
-            body = `<div class="notam-item">No TFRs within ${esc(t.corridorNm)} nm of the route. ` +
+            body = `<div class="notam-item" style="border-left-color:#f9a825;">No TFRs identified within ${esc(t.corridorNm)} nm of the route. ` +
                    `<span style="color:#8a93a0;">${esc(t.totalActive)} active nationally, ` +
-                   `${esc(t.checked)} checked in ${esc((t.states || []).join('/'))}.</span></div>`;
+                   `${esc(t.checked)} checked in ${esc((t.states || []).join('/'))}.</span><br>` +
+                   `<span style="color:#8a6100;">Route-clear status is not established; confirm against the official FAA TFR source.</span></div>`;
           } else {
             body = t.tfrs.map(r => {
               const bits = [];

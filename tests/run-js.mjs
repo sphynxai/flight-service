@@ -12,6 +12,7 @@ import { gairmetAltitude, routeBounds, boundsIntersect } from '../src/hazards-fe
 import { describeStation } from '../src/briefing-agent.js';
 import { encodeLevel, encodeSpeed, encodeDuration, estimateEnrouteMinutes } from '../src/flight-plan.js';
 import { interpolate, applyCorrections, computeTold } from '../src/told.js';
+import { hasTfrRouteCoverage } from '../src/tfr-fetcher.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const C172S = JSON.parse(readFileSync(join(here, '..', 'src', 'performance', 'c172s.json'), 'utf8'));
@@ -27,7 +28,7 @@ const norm = (g) => g === null || g === undefined ? null : {
 const out = {
   groups: [], lines: [], levels: [], stations: [], density: [], gairmetAlt: [],
   fpLevels: [], fpSpeeds: [], fpDurations: [], fpEnroute: [],
-  toldInterp: [], toldCorr: [], toldGate: null
+  toldInterp: [], toldCorr: [], toldGate: null, tfrRouteCoverage: []
 };
 
 for (const c of fx('fb-groups.json').cases) {
@@ -80,5 +81,9 @@ for (const c of told.corrections) {
 // The safety gate itself is a test: an unverified table must never be usable.
 const gated = computeTold({ table: C172S, pressureAltitude: 1000, temperatureC: 20 });
 out.toldGate = { usable: gated.usable, unverified: Boolean(gated.unverified) };
+out.tfrRouteCoverage = [
+  hasTfrRouteCoverage([{ lat: 1, lon: 1 }, { lat: 2, lon: 2 }]),
+  hasTfrRouteCoverage([{ lat: 1, lon: 1 }, { lat: 2, lon: 2 }, { lat: 3, lon: 3 }])
+];
 
 process.stdout.write(JSON.stringify(out));
