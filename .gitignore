@@ -13,3 +13,7 @@ build/
 
 # generated at runtime on the deploy host
 deploy/kbmsolvedit/fb_cache.php
+
+# host-side secrets and runtime state — never commit
+deploy/kbmsolvedit/config.local.php
+deploy/kbmsolvedit/tts_rate.php

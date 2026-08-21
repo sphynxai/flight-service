@@ -22,7 +22,8 @@ const OUT = join(root, 'deploy', 'kbmsolvedit', 'index.php');
 // and the generated copy would silently point at the wrong endpoint.
 const REWRITES = [
   ["fetch('/api/briefing'", "fetch('api.php'"],
-  ["const fpPlanUrl = '/api/flight-plan';", "const fpPlanUrl = 'api.php?action=flight-plan';"]
+  ["const fpPlanUrl = '/api/flight-plan';", "const fpPlanUrl = 'api.php?action=flight-plan';"],
+  ["const ttsUrl = '/api/tts';", "const ttsUrl = 'tts.php';"]
 ];
 
 const src = readFileSync(SRC, 'utf8');

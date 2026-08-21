@@ -1103,15 +1103,60 @@
     speechSynthesis.addEventListener('voiceschanged', () => { chosenVoice = pickVoice(); });
     chosenVoice = pickVoice();
 
-    function speak(text) {
+    function speakBrowser(text) {
       if (!('speechSynthesis' in window) || !text) return;
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       if (!chosenVoice) chosenVoice = pickVoice();
       if (chosenVoice) u.voice = chosenVoice;
-      u.rate = 0.95;   // briefer pace; slower drags on a 200-word briefing
+      // NEVER slow this down to sound more natural — rate-stretching is what
+      // flattened AeroVox. If a natural cadence is wanted, use the TTS engine.
+      u.rate = 1.0;
       u.pitch = 1.0;
       speechSynthesis.speak(u);
+    }
+
+    // Rewritten by scripts/build-php.mjs for the PHP host.
+    const ttsUrl = 'tts.php';
+    let ttsAudio = null;
+    let ttsAvailable = null;   // null = untested, false = fall back silently
+
+    /**
+     * Prefer the real voice; fall back to the browser engine without fuss.
+     * A 503 from the proxy means the host has no key configured — that is an
+     * expected state, not an error worth showing a pilot.
+     */
+    async function speak(text) {
+      if (!text) return;
+      speechSynthesis.cancel();
+      if (ttsAudio) { ttsAudio.pause(); ttsAudio = null; }
+
+      if (ttsAvailable === false) return speakBrowser(text);
+
+      const btn = document.getElementById('speakButton');
+      const label = btn.textContent;
+      btn.textContent = '🔊 Preparing…';
+      btn.disabled = true;
+
+      try {
+        const r = await fetch(ttsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        if (!r.ok) throw new Error(String(r.status));
+
+        const blob = await r.blob();
+        ttsAvailable = true;
+        ttsAudio = new Audio(URL.createObjectURL(blob));
+        ttsAudio.play();
+      } catch (err) {
+        ttsAvailable = false;
+        speakBrowser(text);
+      } finally {
+        btn.textContent = label;
+        btn.disabled = false;
+      }
     }
 
     document.getElementById('speakButton').addEventListener('click', () => {
