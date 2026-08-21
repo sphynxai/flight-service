@@ -64,6 +64,7 @@ const levels = fx('levels.json').cases;
 const stations = fx('metar-stations.json').cases;
 const gairmetAlt = fx('gairmet-altitude.json').cases;
 const fpFx = fx('flight-plan-encoding.json');
+const toldFx = fx('told-interpolation.json');
 const densityFx = fx('density-altitude.json');
 const density = densityFx.cases;
 const DA_TOLERANCE = densityFx.toleranceFt ?? 30;
@@ -125,6 +126,19 @@ function verify(implName, impl) {
         : { minutes: c.expectMinutes, groundSpeed: c.expectGroundSpeed };
       check(`${implName}/fp-eet`, c.why.slice(0, 40), impl.fpEnroute[i], expected, c.why);
     });
+  }
+
+  // TOLD is JS-only: it is gated off until a human verifies the POH tables, so
+  // there is nothing to port yet.
+  if (impl.toldInterp) {
+    toldFx.interpolation.forEach((c, i) =>
+      check(`${implName}/told-interp`, `${c.pressureAlt}ft ${c.tempC}C`, impl.toldInterp[i], c.expect, c.why));
+    toldFx.corrections.forEach((c, i) =>
+      check(`${implName}/told-corr`, JSON.stringify(c.opts), impl.toldCorr[i], c.expect, c.why));
+    // The gate is a safety control, so it is tested like one.
+    check(`${implName}/told-gate`, 'unverified table must not be usable',
+          impl.toldGate, { usable: false, unverified: true },
+          'An unverified performance table must never produce usable planning figures.');
   }
 
   // Ported to JS first; the PHP half is checked once api.php grows hazards.

@@ -1,0 +1,78 @@
+{
+  "_comment": "Bilinear interpolation over a takeoff performance grid. The GRID VALUES in src/performance/*.json are unverified and gated; the MATH here is what these fixtures pin. Expectations are hand-computed from the corners so a regression in the interpolation cannot hide behind plausible-looking output. Grid used is the C172S table: grid[pressureAltFt][tempC] = [groundRoll, over50ft].",
+
+  "interpolation": [
+    {
+      "pressureAlt": 0, "tempC": 20,
+      "expect": { "groundRoll": 925, "over50ft": 1685 },
+      "why": "exact grid point must return the published cell untouched"
+    },
+    {
+      "pressureAlt": 8000, "tempC": 40,
+      "expect": { "groundRoll": 2265, "over50ft": 4560 },
+      "why": "top corner of the envelope is still inside it"
+    },
+    {
+      "pressureAlt": 1000, "tempC": 20,
+      "expect": { "groundRoll": 1015, "over50ft": 1860 },
+      "why": "midway between 0 and 2000 ft at a published temp: (925+1105)/2, (1685+2035)/2"
+    },
+    {
+      "pressureAlt": 0, "tempC": 15,
+      "expect": { "groundRoll": 893, "over50ft": 1628 },
+      "why": "midway between 10C and 20C at sea level: (860+925)/2 rounds to 893, (1570+1685)/2 to 1628"
+    },
+    {
+      "pressureAlt": 1000, "tempC": 15,
+      "expect": { "groundRoll": 979, "over50ft": 1795 },
+      "why": "true bilinear with NO intermediate rounding. Corners 860/925/1025/1105 give 892.5 then 1065, then 978.75 -> 979. Rounding the 892.5 first yields 980, which is what a naive two-step implementation produces - that one-foot gap is the whole point of this case."
+    },
+    {
+      "pressureAlt": 9000, "tempC": 20,
+      "expect": null,
+      "why": "above the published envelope — must report nothing, NEVER extrapolate past where the manufacturer stopped testing"
+    },
+    {
+      "pressureAlt": 4000, "tempC": 45,
+      "expect": null,
+      "why": "hotter than the published table; extrapolating here would understate the distance on exactly the day it matters"
+    },
+    {
+      "pressureAlt": -500, "tempC": 20,
+      "expect": null,
+      "why": "below the table; a below-sea-level field is outside published data"
+    },
+    {
+      "pressureAlt": 4000, "tempC": -5,
+      "expect": null,
+      "why": "colder than the table — outside is outside, even when the answer would be conservative"
+    }
+  ],
+
+  "corrections": [
+    {
+      "base": { "groundRoll": 1000, "over50ft": 2000 },
+      "opts": { "headwindKt": 9 },
+      "expect": { "groundRoll": 900, "over50ft": 1800 },
+      "why": "9 kt headwind decreases distances 10 percent"
+    },
+    {
+      "base": { "groundRoll": 1000, "over50ft": 2000 },
+      "opts": { "headwindKt": 0 },
+      "expect": { "groundRoll": 1000, "over50ft": 2000 },
+      "why": "no wind leaves the figures alone"
+    },
+    {
+      "base": { "groundRoll": 1000, "over50ft": 2000 },
+      "opts": { "headwindKt": -2 },
+      "expect": { "groundRoll": 1100, "over50ft": 2200 },
+      "why": "TAILWIND. 2 kt increases distances 10 percent — must never be treated as a small headwind benefit"
+    },
+    {
+      "base": { "groundRoll": 1000, "over50ft": 2000 },
+      "opts": { "surface": "grass" },
+      "expect": { "groundRoll": 1150, "over50ft": 2150 },
+      "why": "dry grass adds 15 percent OF THE GROUND ROLL to both figures, not 15 percent of each"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "aircraft": "C172S",
+  "_comment": "Cessna 172S Skyhawk SP takeoff performance. THESE FIGURES ARE UNVERIFIED AND ARE NOT SHOWN TO ANY USER while verified=false — src/told.js hard-gates on that flag. They were entered from recollection of the type's published data and MUST be checked cell-by-cell against a real POH before the flag is flipped. A wrong cell here is not a display bug: a pilot could plan a departure they cannot make.",
+
+  "verified": false,
+  "verification": {
+    "requiredSource": "Cessna 172S Skyhawk SP Pilot's Operating Handbook, Section 5, Takeoff Distance (Short Field)",
+    "checkedBy": null,
+    "checkedOn": null,
+    "note": "Flip verified to true ONLY after every cell below has been read off the POH page. Record who checked it and when."
+  },
+
+  "source": "Cessna 172S POH Section 5 — Short Field Takeoff Distance (PENDING VERIFICATION)",
+
+  "takeoff": {
+    "configuration": "short field, flaps 10°, full throttle before brake release, paved level dry runway",
+    "weightLb": 2550,
+    "corrections": {
+      "headwindPer9kt": 0.10,
+      "tailwindPer2kt": 0.10,
+      "dryGrassGroundRollPct": 0.15
+    },
+    "_axes": "grid[pressureAltitudeFt][temperatureC] = [groundRollFt, distanceOver50ftFt]",
+    "grid": {
+      "0": {
+        "0":  [795, 1460],
+        "10": [860, 1570],
+        "20": [925, 1685],
+        "30": [995, 1810],
+        "40": [1065, 1945]
+      },
+      "2000": {
+        "0":  [950, 1755],
+        "10": [1025, 1890],
+        "20": [1105, 2035],
+        "30": [1190, 2190],
+        "40": [1280, 2355]
+      },
+      "4000": {
+        "0":  [1140, 2120],
+        "10": [1230, 2295],
+        "20": [1325, 2480],
+        "30": [1425, 2685],
+        "40": [1535, 2900]
+      },
+      "6000": {
+        "0":  [1375, 2580],
+        "10": [1485, 2805],
+        "20": [1600, 3045],
+        "30": [1725, 3310],
+        "40": [1855, 3590]
+      },
+      "8000": {
+        "0":  [1665, 3175],
+        "10": [1800, 3470],
+        "20": [1945, 3800],
+        "30": [2100, 4160],
+        "40": [2265, 4560]
+      }
+    }
+  }
+}

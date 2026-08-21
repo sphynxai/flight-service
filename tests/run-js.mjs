@@ -11,8 +11,10 @@ import { computeAltitudes } from '../src/weather-fetcher.js';
 import { gairmetAltitude, routeBounds, boundsIntersect } from '../src/hazards-fetcher.js';
 import { describeStation } from '../src/briefing-agent.js';
 import { encodeLevel, encodeSpeed, encodeDuration, estimateEnrouteMinutes } from '../src/flight-plan.js';
+import { interpolate, applyCorrections, computeTold } from '../src/told.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const C172S = JSON.parse(readFileSync(join(here, '..', 'src', 'performance', 'c172s.json'), 'utf8'));
 const fx = (name) => JSON.parse(readFileSync(join(here, 'fixtures', name), 'utf8'));
 
 const norm = (g) => g === null || g === undefined ? null : {
@@ -24,7 +26,8 @@ const norm = (g) => g === null || g === undefined ? null : {
 
 const out = {
   groups: [], lines: [], levels: [], stations: [], density: [], gairmetAlt: [],
-  fpLevels: [], fpSpeeds: [], fpDurations: [], fpEnroute: []
+  fpLevels: [], fpSpeeds: [], fpDurations: [], fpEnroute: [],
+  toldInterp: [], toldCorr: [], toldGate: null
 };
 
 for (const c of fx('fb-groups.json').cases) {
@@ -65,5 +68,17 @@ for (const c of fp.enroute) {
   const r = estimateEnrouteMinutes(c.input);
   out.fpEnroute.push(r === null ? null : { minutes: r.minutes, groundSpeed: r.groundSpeed });
 }
+
+const told = fx('told-interpolation.json');
+for (const c of told.interpolation) {
+  out.toldInterp.push(interpolate(C172S.takeoff.grid, c.pressureAlt, c.tempC));
+}
+for (const c of told.corrections) {
+  const r = applyCorrections(c.base, c.opts, C172S.takeoff);
+  out.toldCorr.push(r ? { groundRoll: r.groundRoll, over50ft: r.over50ft } : null);
+}
+// The safety gate itself is a test: an unverified table must never be usable.
+const gated = computeTold({ table: C172S, pressureAltitude: 1000, temperatureC: 20 });
+out.toldGate = { usable: gated.usable, unverified: Boolean(gated.unverified) };
 
 process.stdout.write(JSON.stringify(out));
