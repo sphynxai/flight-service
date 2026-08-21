@@ -1076,10 +1076,39 @@
     let lastVoice = null;
     let spokenAutomatically = false;
 
+    // Preferred female voices in descending quality, matched by substring. The
+    // browser's list differs per OS and loads asynchronously, so this picks the
+    // best available rather than naming one and failing silently elsewhere.
+    const VOICE_PREFS = [
+      'Microsoft Aria', 'Microsoft Jenny', 'Microsoft Michelle', 'Microsoft Zira',
+      'Google US English', 'Samantha', 'Karen', 'Moira', 'Tessa'
+    ];
+    let chosenVoice = null;
+
+    function pickVoice() {
+      const all = speechSynthesis.getVoices();
+      if (!all.length) return null;
+      const en = all.filter(v => /^en(-|_|$)/i.test(v.lang));
+      const pool = en.length ? en : all;
+
+      for (const want of VOICE_PREFS) {
+        const hit = pool.find(v => v.name.toLowerCase().includes(want.toLowerCase()));
+        if (hit) return hit;
+      }
+      // Last resort: anything the platform labels female.
+      return pool.find(v => /female/i.test(v.name)) || pool[0] || null;
+    }
+
+    // getVoices() is empty until the list loads on some browsers.
+    speechSynthesis.addEventListener('voiceschanged', () => { chosenVoice = pickVoice(); });
+    chosenVoice = pickVoice();
+
     function speak(text) {
       if (!('speechSynthesis' in window) || !text) return;
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
+      if (!chosenVoice) chosenVoice = pickVoice();
+      if (chosenVoice) u.voice = chosenVoice;
       u.rate = 0.95;   // briefer pace; slower drags on a 200-word briefing
       u.pitch = 1.0;
       speechSynthesis.speak(u);
